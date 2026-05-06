@@ -1,0 +1,20 @@
+node_modules/
+dist/
+.cache/
+*.log
+
+# Generated outputs (per-customer findings should never be committed)
+reports/
+out/
+
+# Tokens — never commit
+*.token
+.dt-token
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/

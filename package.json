@@ -1,0 +1,30 @@
+{
+  "name": "dt-managed-ahr-mcp",
+  "version": "0.0.1",
+  "description": "MCP server wrapping Dynatrace Managed Settings 2.0 + config APIs for Account Health Review work",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "dt-managed-ahr-mcp": "dist/server.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "tsc --watch",
+    "smoke": "tsx scripts/smoke.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "undici": "^6.21.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
