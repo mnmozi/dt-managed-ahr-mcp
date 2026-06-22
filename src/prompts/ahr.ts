@@ -37,6 +37,14 @@ Time-window discipline: all "live data" calls — entity discovery, tag listings
 
 Always pass the window explicitly on tools that accept \`from\`/\`to\` (\`dt_list_tags_for_entity\`, \`dt_get_service_request_cardinality\`, upstream \`query_metrics_data\`, upstream \`list_problems\` if filtering, etc.). Do not rely on default windows.
 
+Naming-hygiene discipline (applies to Phase 1 hosts/host-groups and Phase 2 PGs): the engine-backed naming audits (\`dt_audit_process_group_naming\`, \`dt_audit_host_naming\`, \`dt_audit_host_groups\`) run BEFORE tag-strategy work in their phase. Name-based tag rules are unreliable when entities have generic names like \`ip-10-0-1-23\`, \`:80\`, or \`python3\` — fix the structure first, then layer tags on top. Compute order is bottom-up (PG audit → host audit → host-group audit) because host candidates pull from PG evidence; the report ORDER is top-down to match operator mental model. Every applied naming decision goes through a lattice (\`engine_high\` / \`ai_proposed\` / \`operator_confirmed\` / \`operator_override\`) enforced in code — you cannot upgrade a bucket or invent names not in the engine's candidate list. For \`no_signal\` entities, propose nothing; mark for manual review.
+
+Tag-strategy discipline (applies to every "derive the de-facto taxonomy" step in Phase 1, Phase 2, Phase 4 — and any other phase where you would otherwise eyeball tag coverage by reading raw output): use the engine-backed 3-round loop instead of hand-rolling the analysis. The loop is:
+- Round 1 — \`dt_get_tag_snapshot\`: returns per-entity-type counts, per-key taxonomy with coverage and value-format judgment, key similarity clusters (typo / casing drift), low-tag entities with their subgraph, propagation hints. Replaces the "aggregate every tag on every host / PG / service" eyeballing — the engine does it deterministically.
+- Round 2a — \`dt_extract_tag_signals\`: for a target key (e.g. \`team\`, \`env\`, \`product\`) and the low-tag entities from Round 1, extracts candidate values from properties / env vars / cloud-provider tags / graph neighbors. Returns confidence-ranked candidates per entity + a consensus pick. Use this BEFORE recommending a propagation source — don't guess that "OWNING_TEAM env var" works; verify it.
+- Round 2b — \`dt_simulate_tag_strategy\`: given a proposed extraction strategy (per-key recipe of source → key + value rule), simulates coverage on the entity graph. Returns % coverage per key + the uncovered entities. Use this to validate the FINAL strategy artifact before committing it to the report.
+You may NOT skip the engine loop and instead reason about coverage from raw \`dt_list_tags_for_entity\` output — that path is for spot-checks and edge cases, not for the headline taxonomy finding. The engine's output IS the source of truth.
+
 Remediation discipline (applies to every "Remediation" you write in any phase):
 
 For each finding, surface 2-3 alternative ways to fix it BEFORE picking one. Compare them on stability, blast radius, and effort. Then recommend one and explain why. Never propose a single fix in isolation — the user almost always has options.
@@ -88,23 +96,31 @@ Inventory:
 - Upstream \`dynatrace_managed_discover_entities\` for HOST_GROUP, then HOST. Use \`get_entity_details\` when richer fields are needed.
 - Per host, capture: name, OS, monitoring mode, host group, all tags (each with \`context\` + \`key\` + \`value\` + \`stringRepresentation\` + source when inferable), custom host metadata, management zones.
 
-Tag taxonomy — DERIVE IT, DO NOT ASSUME:
-- Aggregate every tag on every host. For each tag \`key\`, compute:
-  - coverage: fraction of hosts that carry the key
-  - value cardinality: how many distinct values
-  - context distribution: how many appearances are CONTEXTLESS (manual) vs AWS / KUBERNETES / ENVIRONMENT / host-metadata / auto-tag-sourced
-  - value-format consistency: do values look uniform (same casing, same shape) or messy (mixed \`env:Prod\`, \`env:prod\`, \`Env:PRD\`)?
-- Derive the de-facto consensus taxonomy:
+Tag taxonomy — DERIVE IT, DO NOT ASSUME (engine-backed via the 3-round loop; see Tag-strategy discipline above):
+- Round 1 — call \`dt_get_tag_snapshot\` with \`lowTagThreshold: 1\` and \`graphMode: "low_tag_only"\` (default). The engine returns per-type counts, per-key coverage / value-format / context distribution, key similarity clusters (typos), low-tag entities with subgraph, propagation hints. Use this output AS the per-key taxonomy section of phase-1.md — do not re-compute by hand.
+- Round 2a — for each ownership-style key that came back at <60% coverage or messy (likely candidates: \`team\`, \`owner\`, \`product\`, \`env\`, \`tier\`), call \`dt_extract_tag_signals\` with the target key and the low-tag entity ids from Round 1. The engine returns candidate values per entity from env vars / AWS+GCP+Azure tags / k8s labels / graph neighbors, with confidence + a consensus pick. Use these candidates to ground the "propagation source" in your remediations — don't guess.
+- Round 2b — once you've drafted a proposed strategy (per-key extraction recipe), call \`dt_simulate_tag_strategy\` with the proposal. The engine returns simulated % coverage per key + the uncovered entities. Iterate the strategy until simulated coverage clears your threshold; only then commit the strategy to the report.
+- Bucket the engine's per-key output into the operator's mental model for the report:
   - Keys with coverage ≥ 60% → "consensus" keys. These are the tags the account is de facto using.
-  - Keys with 10–60% coverage → "inconsistent rollout" — flag these with coverage %.
+  - Keys with 10–60% coverage → "inconsistent rollout" — flag with coverage %.
   - Keys with < 10% coverage → "long tail / ad-hoc" — list at most 20, collapse the rest into a count.
-- Report whether the overall shape looks disciplined (few consensus keys, high coverage, stable values) or messy (many sparse keys, duplicated manual/auto pairs, inconsistent values). Use your judgment — this is the headline finding.
+- Headline finding: report whether the overall shape looks disciplined (few consensus keys, high coverage, stable values) or messy (many sparse keys, duplicated manual/auto pairs, inconsistent values). Cite the snapshot's similarity clusters as evidence for "messy".
 
 Host Group hygiene:
 - Hosts with no host group
 - Host groups with a single host
 - Host groups with generic names (technology-only like \`java\`, \`node\`, or just the hostname)
 - Host groups mixing OS families or roles (infer role from tags/metadata)
+
+Host & Host-Group naming hygiene (engine-backed — run this BEFORE tag-strategy work because name-based tag rules are unreliable when entities have generic names like \`ip-10-0-1-23\` or \`:80\`):
+- \`dt_audit_host_naming\` — flags hosts with generic display names and returns ranked candidate names from cloud tags / k8s labels / FQDN / dominant process group / fleet-mate match. Output is bucketed (high_confidence / ambiguous / no_signal).
+- \`dt_audit_host_groups\` — five-category report: hostsWithoutGroup, splitFleets (same workload scattered across groups), singleMemberLikelyTypos, genericGroupNames, namingDrift.
+- Decision lattice (enforced in code by \`dt_apply_host_clarifying_tag\`):
+  - high_confidence → propose source='engine_high' (chosenName must equal engine's topCandidate)
+  - ambiguous → propose source='ai_proposed' with a 1-2 sentence rationale; chosenName MUST be in the engine's candidate list (you cannot invent names)
+  - no_signal → DO NOT propose; mark for manual review or use operator_override (which is loudly logged)
+- After operator approval, call \`dt_apply_host_clarifying_tag\` with reports + decisions to write \`name:<chosenName>\` tags. Downstream tag rules then match \`tag(name:orders-api)\` reliably.
+- For host-group findings: call \`dt_export_hostgroup_remediation\` with operator-picked findings to generate oneagentctl shell commands. Host-group membership can't be changed via API; the MCP NEVER runs the commands — present them to the operator.
 
 Tag hygiene (derived, NOT against a user-provided taxonomy):
 - Consensus keys missing on a minority of hosts (name the hosts — these are likely the real outliers)
@@ -138,7 +154,7 @@ Per-host module + technology coverage (mandatory):
 
 When the strategy artifacts (suggested tagging strategy, auto-tag strategy) reference env vars as the value source, they MUST verify enrichment is on. If not, the strategy includes a Wave 0 entry: "enable hostmonitoring.metadata-enrichment before any env-var-keyed auto-tag rule can produce values".
 
-Output: \`${reportDir}/phase-1.md\` with sections — Inventory, De-facto Tag Taxonomy, Host Group Hygiene, Tag Hygiene, Auto-tag Rule Audit, Monitoring Health (OneAgent + ActiveGate), Per-Host Module + Tech Coverage, OneAgent Features + Enrichment, Remediation (High/Medium/Low). Append a short section to \`${reportDir}/report.md\`. STOP.
+Output: \`${reportDir}/phase-1.md\` with sections — Inventory, De-facto Tag Taxonomy, Host Group Hygiene, Host & Host-Group Naming Hygiene (engine reports + decisions applied or pending), Tag Hygiene, Auto-tag Rule Audit, Monitoring Health (OneAgent + ActiveGate), Per-Host Module + Tech Coverage, OneAgent Features + Enrichment, Remediation (High/Medium/Low). Append a short section to \`${reportDir}/report.md\`. STOP.
 
 === PHASE 2 — Process Groups & Process Group Instances ===
 
@@ -148,8 +164,13 @@ Checks:
 - Wrong grouping: PGIs under one PG with divergent exe paths/cmdlines, or spanning multiple environments / host groups
 - Generic PG names (\`java\`, \`node\`, exe-only)
 - Do NOT flag many small PGs that are the same app on different hosts — that is expected
-- Missing or inconsistent tags at PG and PGI level (same discovery approach as Phase 1: derive the PG/PGI de-facto taxonomy separately from hosts, since it can differ)
+- Missing or inconsistent tags at PG and PGI level
 - Cases where \`DT_CLUSTER_ID\` / \`DT_NODE_ID\` / \`DT_TAGS\` env vars would cleanly separate or identify instances but aren't set
+
+PG/PGI tag taxonomy — derive via the 3-round loop (same engine path as Phase 1; see Tag-strategy discipline):
+- Round 1 — \`dt_get_tag_snapshot\` returns counts + per-key taxonomy across ALL entity types in one call. For the Phase 2 report, focus the sections on \`PROCESS_GROUP\` and \`PROCESS_GROUP_INSTANCE\` from the same snapshot (no need to re-call). Compare per-key coverage against the host-level coverage from Phase 1 to spot keys that "exist on hosts but stop at PG" (a common ownership-propagation gap).
+- Round 2a — for ownership-style keys that are weaker on PG/PGI than on hosts, call \`dt_extract_tag_signals\` with the target key. The engine surfaces candidate values from PG/PGI properties (env vars are particularly strong on PGI: \`OWNING_TEAM\`, \`DT_TAGS\`, \`DEPLOYMENT_ENV\`). Cite the consensus pick in remediations.
+- Round 2b — if you're proposing a new PG-level extraction strategy, validate with \`dt_simulate_tag_strategy\` before writing it into the report.
 
 Cross-check via dt-ahr:
 - \`dt_get_pg_detection_rules\` — for each rule: enabled, condition summary, estimated effect. Flag overbroad / dead / duplicate / mis-scoped.
@@ -157,9 +178,14 @@ Cross-check via dt-ahr:
 - \`dt_get_naming_rules\` and \`dt_get_conditional_naming(type='processGroup')\` — list active PG naming rules. Flag generic-named PGs that have no rule covering them, and rules whose condition no longer matches anything (dead rules).
 - For any PG with a generic display name, call \`dt_get_process_properties\` on one of its PGIs to identify a stable property that could feed a naming rule (e.g. env var, k8s label, host group).
 
-For each finding map the remediation to one of: \`DT_CLUSTER_ID\` env var, PG detection rule, custom naming rule, tagging rule.
+PG naming hygiene (engine-backed — run this BEFORE deciding the PG taxonomy section above; downstream tag work in later phases assumes PGs are sanely named):
+- \`dt_audit_process_group_naming\` — flags PGs with generic display names (port-only, bare technology, Dynatrace defaults) and returns ranked candidate names from JarFile / KubernetesContainerName / CommandLineArguments / JavaMainClass / Docker image tail / softwareTechnologies. Bucketed (high_confidence / ambiguous / no_signal).
+- Same decision lattice as Phase 1 host naming: high_confidence → engine_high, ambiguous → ai_proposed (with rationale, names ONLY from engine candidates), no_signal → manual review or operator_override.
+- After operator approval, call \`dt_apply_pg_naming_rule\` with reports + decisions to write \`name:<chosenName>\` tags. Downstream tag rules then match \`tag(name:billing-svc)\` even when the PG's display name is still "java".
 
-Output: \`${reportDir}/phase-2.md\`. Append to \`${reportDir}/report.md\`. STOP.
+For each finding map the remediation to one of: \`DT_CLUSTER_ID\` env var, PG detection rule, custom naming rule, tagging rule, or naming-clarity tag (the route the engine-backed naming hygiene step uses).
+
+Output: \`${reportDir}/phase-2.md\` with sections — Inventory, PG Naming Hygiene (engine reports + decisions applied or pending), Wrong Grouping, Tag Coverage, Detection Rules Audit, Auto-tag Rules Audit, Naming Rules Audit, Remediation. Append to \`${reportDir}/report.md\`. STOP.
 
 === PHASE 3 — Management Zones ===
 
@@ -239,9 +265,11 @@ Inventory:
 - Upstream \`dynatrace_managed_discover_entities\` for SERVICE — bucket by technology, MZ membership, owning PG.
 - For each SERVICE, capture name, technology, backing PG ids, MZ membership, tags (with context).
 
-De-facto SERVICE tag taxonomy — separate pass from Phase 1 (hosts) and Phase 2 (PGs):
-- \`dt_list_tags_for_entity\` with \`type(SERVICE)\`. Same coverage / cardinality / context-mix / value-format-consistency analysis.
-- Compare against Phase 1 host taxonomy and Phase 2 PG taxonomy: do ownership keys (\`team\`, \`owner\`, \`product\`, \`bu\`) propagate to services or stop at PG?
+De-facto SERVICE tag taxonomy — engine-backed via the 3-round loop (see Tag-strategy discipline). Same engine snapshot that Phase 1/2 used carries SERVICE rows too — you do NOT re-fetch:
+- Round 1 — \`dt_get_tag_snapshot\` (if not already cached from earlier phases). Read off the \`SERVICE\` slice of the per-key coverage map. Use this for the headline "do ownership keys propagate to services or stop at PG?" finding: compare per-key coverage SERVICE vs PROCESS_GROUP — a sharp drop signals propagation is blocked at the PG → service boundary.
+- Round 2a — for any ownership key with weak SERVICE coverage, call \`dt_extract_tag_signals\` with target=that key. The engine traverses the SERVICE → PGI → PG → HOST containment chain and surfaces upstream candidates ("this service is backed by PGs that DO have \`team=orders\` — propagate via call chain"). Use these as the propagation-recipe evidence.
+- Round 2b — \`dt_simulate_tag_strategy\` on the proposed SERVICE-level extraction recipe before committing to the Phase 4 strategy section.
+- \`dt_list_tags_for_entity type(SERVICE)\` is still useful for spot-checks on individual services, but the snapshot is the source of truth for the taxonomy section.
 
 Detection / grouping hygiene:
 - \`dt_get_service_detection_rules\` — for each rule: enabled, condition validity, dead, overbroad, duplicate, mis-scoped.

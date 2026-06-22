@@ -1,18 +1,21 @@
 {
-  "name": "dt-managed-ahr-mcp",
-  "version": "0.0.1",
-  "description": "MCP server wrapping Dynatrace Managed Settings 2.0 + config APIs for Account Health Review work",
+  "name": "dt-managed-mcp",
+  "version": "0.1.0",
+  "description": "Unified MCP server for Dynatrace Managed: read (Settings 2.0, entities, metrics, events, problems, SLOs, RUM, consumption, tokens) + optional write (Settings 2.0 create/update/validate, custom metric ingest, dashboard create/update). The read surface always works; write tools register only when DT_WRITE_TOKEN is set.",
   "private": true,
   "type": "module",
   "bin": {
-    "dt-managed-ahr-mcp": "dist/server.js"
+    "dt-managed-mcp": "dist/server.js"
   },
   "scripts": {
     "build": "tsc",
     "start": "node dist/server.js",
     "dev": "tsc --watch",
     "smoke": "tsx scripts/smoke.ts",
-    "typecheck": "tsc --noEmit"
+    "smoke:naming": "tsx scripts/smoke-naming.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "engines": {
     "node": ">=20"
@@ -25,6 +28,7 @@
   "devDependencies": {
     "@types/node": "^22.9.0",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "^3.2.4"
   }
 }

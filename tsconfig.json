@@ -16,5 +16,5 @@
     "removeComments": false
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "scripts"]
+  "exclude": ["node_modules", "dist", "scripts", "src/**/*.test.ts"]
 }

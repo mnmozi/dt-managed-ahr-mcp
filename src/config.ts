@@ -1,11 +1,14 @@
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 export interface DtConfig {
   clusterUrl: string;
   envId: string;
   token: string;
   clusterToken: string | null;
+  writeToken: string | null;
   tlsVerify: boolean;
+  auditDir: string;
 }
 
 export class ConfigError extends Error {
@@ -43,7 +46,7 @@ function readTokenFile(path: string, label: string): string {
 
 /**
  * Resolves a token from either a direct env var or a file path env var.
- * Exactly one of the two must be set.
+ * Exactly one of the two must be set when `required` is true.
  */
 function resolveToken(
   directValue: string | undefined,
@@ -96,7 +99,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): DtConfig {
     false
   );
 
-  const tlsVerify = env.DT_TLS_VERIFY !== "0";
+  // Optional — when present, enables the write tools (settings create/update,
+  // metric ingest, dashboard create/update). When absent, those tools refuse
+  // at call time with a clear error and the MCP behaves as read-only.
+  const writeToken = resolveToken(
+    env.DT_WRITE_TOKEN,
+    env.DT_WRITE_TOKEN_FILE,
+    "DT_WRITE_TOKEN",
+    "DT_WRITE_TOKEN_FILE",
+    false
+  );
 
-  return { clusterUrl, envId, token, clusterToken, tlsVerify };
+  const tlsVerify = env.DT_TLS_VERIFY !== "0";
+  const auditDir = env.DT_AUDIT_DIR?.trim() || join(process.cwd(), ".audit");
+
+  return { clusterUrl, envId, token, clusterToken, writeToken, tlsVerify, auditDir };
 }

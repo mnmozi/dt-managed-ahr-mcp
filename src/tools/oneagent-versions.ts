@@ -1,39 +1,95 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { DtClient } from "../dt-client.js";
+import { DtApiError, type DtClient } from "../dt-client.js";
+import { getEngine } from "../engine/engine-singleton.js";
+import {
+  analyzeOneAgentDistribution,
+  type OneAgentHostRaw,
+} from "../engine/analyzers/oneagent-distribution.js";
 
-interface OneAgent {
-  hostInfo?: { hostName?: string; entityId?: string; osType?: string };
-  faultyVersion?: boolean;
-  active?: boolean;
-  configurationMode?: string;
-  monitoringType?: string;
-  autoUpdateSetting?: string;
-  updateStatus?: string;
-  availabilityState?: string;
-  modules?: Array<{ moduleType?: string; enabled?: boolean; version?: string }>;
-  currentVersion?: string;
-  installerVersion?: string;
-  lastModuleUpdates?: unknown;
-  [k: string]: unknown;
-}
+/**
+ * dt_get_oneagent_versions — audit OneAgent rollout health.
+ *
+ * This tool is "piping": it
+ *   1. fetches /api/v2/oneagents (auto-paginated)
+ *   2. fetches the cluster's latest available version per OS
+ *      (/api/v1/deployment/installer/agent/{os}/default/latest/metainfo)
+ *   3. hands both to the engine's `oneagent.distribution` analyzer
+ *   4. returns the analyzed summary (and optionally the raw host list)
+ *
+ * All actual math (counts, comparisons, "behind latest") lives in the engine.
+ */
 
 interface OneAgentListResponse {
   totalCount?: number;
   pageSize?: number;
   nextPageKey?: string | null;
-  hosts?: OneAgent[];
+  hosts?: OneAgentHostRaw[];
 }
 
-function compareVersions(a: string, b: string): number {
-  const parseV = (v: string) => v.split(/[.\-+]/).map((p) => Number.parseInt(p, 10) || 0);
-  const av = parseV(a);
-  const bv = parseV(b);
-  for (let i = 0; i < Math.max(av.length, bv.length); i++) {
-    const diff = (av[i] ?? 0) - (bv[i] ?? 0);
-    if (diff !== 0) return diff;
+/**
+ * Fetches the cluster's latest available OneAgent version for each OS that
+ * actually appears in the host inventory. Returns a map osType → version.
+ *
+ * Tolerant: per-OS failures don't fail the whole call. If the endpoint
+ * doesn't exist on this Managed version, returns an empty map and the
+ * analyzer falls back to "no per-OS reference" mode for affected hosts.
+ *
+ * Endpoint candidates (varies by Managed version):
+ *   1. GET /api/v1/deployment/installer/agent/{os}/default/latest/metainfo
+ *      → returns { latestAgentVersion: "1.295.0" }
+ *   2. GET /api/v1/deployment/installer/agent/versions/{os}
+ *      → returns { availableVersions: ["1.290.0","1.291.0",...] }
+ *
+ * We try (1) first, fall back to (2) per OS.
+ */
+async function fetchLatestVersionsByOs(
+  client: DtClient,
+  osTypes: Set<string>
+): Promise<{ map: Record<string, string>; errors: Array<{ osType: string; error: string }> }> {
+  const map: Record<string, string> = {};
+  const errors: Array<{ osType: string; error: string }> = [];
+
+  for (const osType of osTypes) {
+    if (osType === "UNKNOWN" || osType === "") continue;
+    const osLower = osType.toLowerCase();
+    try {
+      const resp = await client.get<{ latestAgentVersion?: string }>(
+        `/api/v1/deployment/installer/agent/${encodeURIComponent(osLower)}/default/latest/metainfo`
+      );
+      if (resp?.latestAgentVersion) {
+        map[osType] = resp.latestAgentVersion;
+        continue;
+      }
+    } catch {
+      // fall through to v2
+    }
+    try {
+      const resp = await client.get<{ availableVersions?: string[] }>(
+        `/api/v1/deployment/installer/agent/versions/${encodeURIComponent(osLower)}`
+      );
+      const versions = resp?.availableVersions ?? [];
+      if (versions.length > 0) {
+        // last entry is typically newest; if not, the engine's comparison
+        // logic doesn't depend on a perfectly-correct latest — it just
+        // computes minorBehind against whatever we say is latest.
+        const last = versions[versions.length - 1];
+        if (typeof last === "string") {
+          map[osType] = last;
+          continue;
+        }
+      }
+    } catch (err) {
+      const msg =
+        err instanceof DtApiError
+          ? `HTTP ${err.status}`
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      errors.push({ osType, error: msg });
+    }
   }
-  return 0;
+  return { map, errors };
 }
 
 export function registerOneAgentVersions(server: McpServer, client: DtClient): void {
@@ -41,18 +97,31 @@ export function registerOneAgentVersions(server: McpServer, client: DtClient): v
     "dt_get_oneagent_versions",
     {
       description:
-        "Audit OneAgent rollout health: per-host current version, OS, monitoring mode, autoUpdate setting, updateStatus, faultyVersion flag, last seen. Returns a per-host list AND a summary (count by version, by autoUpdate setting, by monitoring mode, faulty count, hosts > N versions behind latest).",
+        "Audit OneAgent rollout health: per-host version, OS, monitoring mode, autoUpdate, faulty flag, plus per-OS 'behind latest' comparison against the cluster's available latest. Use this to answer: 'how many hosts are running an old version?', 'which hosts are full-stack vs infra and on which OS?', 'are there faulty OneAgent versions deployed anywhere?', 'show me hosts with auto-update disabled', 'which Linux hosts are >5 minor versions behind latest?'. Args: includeHosts (full inventory), skipLatestLookup, osTypeOverrides.",
       inputSchema: {
         includeHosts: z
           .boolean()
           .optional()
           .describe(
-            "If true, returns the full per-host list. Default false — only the summary, which is much smaller."
+            "If true, returns the full per-host list alongside the summary. Default false (summary only — much smaller)."
+          ),
+        skipLatestLookup: z
+          .boolean()
+          .optional()
+          .describe(
+            "If true, skip fetching the cluster's latest-version-per-OS. The 'behind latest' fields will be absent. Useful when the deployment installer endpoint is unavailable or the token lacks scope."
+          ),
+        osTypeOverrides: z
+          .record(z.string(), z.string())
+          .optional()
+          .describe(
+            "Optional. Pin a latest version per OS for testing or to override what the cluster reports, e.g. {'LINUX': '1.295.0'}."
           ),
       },
     },
-    async ({ includeHosts }) => {
-      const all: OneAgent[] = [];
+    async ({ includeHosts, skipLatestLookup, osTypeOverrides }) => {
+      // ---------- 1. Paginate /api/v2/oneagents ----------
+      const hosts: OneAgentHostRaw[] = [];
       let nextPageKey: string | null | undefined;
       let pages = 0;
       const cap = 200;
@@ -64,74 +133,71 @@ export function registerOneAgentVersions(server: McpServer, client: DtClient): v
           : await client.get<OneAgentListResponse>("/api/v2/oneagents", {
               query: { pageSize: 500 },
             });
-        if (resp.hosts) all.push(...resp.hosts);
+        if (resp.hosts) hosts.push(...resp.hosts);
         nextPageKey = resp.nextPageKey ?? null;
         pages++;
       } while (nextPageKey && pages < cap);
 
-      // Summary
-      const byVersion = new Map<string, number>();
-      const byAutoUpdate = new Map<string, number>();
-      const byMonitoring = new Map<string, number>();
-      const byOs = new Map<string, number>();
-      let faulty = 0;
-      let inactive = 0;
-      const versions: string[] = [];
-
-      for (const h of all) {
-        const v = h.currentVersion ?? h.installerVersion ?? "unknown";
-        byVersion.set(v, (byVersion.get(v) ?? 0) + 1);
-        if (v !== "unknown") versions.push(v);
-        const au = h.autoUpdateSetting ?? "UNKNOWN";
-        byAutoUpdate.set(au, (byAutoUpdate.get(au) ?? 0) + 1);
-        const mt = h.monitoringType ?? "UNKNOWN";
-        byMonitoring.set(mt, (byMonitoring.get(mt) ?? 0) + 1);
-        const os = h.hostInfo?.osType ?? "UNKNOWN";
-        byOs.set(os, (byOs.get(os) ?? 0) + 1);
-        if (h.faultyVersion) faulty++;
-        if (h.active === false) inactive++;
+      // ---------- 2. Fetch per-OS latest versions ----------
+      const observedOsTypes = new Set<string>();
+      for (const h of hosts) {
+        const os = h.hostInfo?.osType;
+        if (os) observedOsTypes.add(os);
+      }
+      let latestVersionsByOs: Record<string, string> = {};
+      let latestLookupErrors: Array<{ osType: string; error: string }> = [];
+      if (!skipLatestLookup) {
+        const { map, errors } = await fetchLatestVersionsByOs(client, observedOsTypes);
+        latestVersionsByOs = map;
+        latestLookupErrors = errors;
+      }
+      // Apply explicit overrides last so they win.
+      if (osTypeOverrides) {
+        for (const [k, v] of Object.entries(osTypeOverrides)) {
+          latestVersionsByOs[k] = v;
+        }
       }
 
-      const sortedVersions = [...new Set(versions)].sort(compareVersions);
-      const latest = sortedVersions[sortedVersions.length - 1];
-      const minorBehind = (v: string): number => {
-        if (!latest) return 0;
-        const lv = latest.split(".").map((p) => Number.parseInt(p, 10) || 0);
-        const vv = v.split(".").map((p) => Number.parseInt(p, 10) || 0);
-        return ((lv[0] ?? 0) - (vv[0] ?? 0)) * 1000 + ((lv[1] ?? 0) - (vv[1] ?? 0));
-      };
-      const outdatedHosts = all
-        .filter((h) => {
-          const v = h.currentVersion ?? h.installerVersion;
-          return v && latest && minorBehind(v) >= 5; // 5+ minor versions behind
-        })
-        .map((h) => ({
-          hostName: h.hostInfo?.hostName,
-          entityId: h.hostInfo?.entityId,
-          version: h.currentVersion ?? h.installerVersion,
-          autoUpdateSetting: h.autoUpdateSetting,
-        }));
+      // ---------- 3. Hand to engine analyzer ----------
+      let summary;
+      try {
+        const engine = await getEngine();
+        summary = await analyzeOneAgentDistribution(engine, {
+          hosts,
+          latestVersionsByOs,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  available: false,
+                  reason: "engine unavailable — compute could not run",
+                  error: msg,
+                  hint:
+                    "Set DT_ENGINE_BIN to the path of dt-engine, or build via `scripts/install-engine.sh`.",
+                },
+                null,
+                2
+              ),
+            },
+          ],
+          isError: true,
+        };
+      }
 
-      const summary = {
-        totalHosts: all.length,
-        latestVersionSeen: latest,
-        versions: Object.fromEntries(byVersion),
-        autoUpdateSettings: Object.fromEntries(byAutoUpdate),
-        monitoringTypes: Object.fromEntries(byMonitoring),
-        osTypes: Object.fromEntries(byOs),
-        faultyVersionCount: faulty,
-        inactiveCount: inactive,
-        outdatedHostsCount: outdatedHosts.length,
-        outdatedHostsSample: outdatedHosts.slice(0, 20),
-      };
+      // ---------- 4. Shape response ----------
+      const responseBody: Record<string, unknown> = { summary };
+      if (latestLookupErrors.length > 0) {
+        responseBody.latestLookupErrors = latestLookupErrors;
+      }
+      if (includeHosts) responseBody.hosts = hosts;
 
       return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(includeHosts ? { summary, hosts: all } : { summary }, null, 2),
-          },
-        ],
+        content: [{ type: "text", text: JSON.stringify(responseBody, null, 2) }],
       };
     }
   );

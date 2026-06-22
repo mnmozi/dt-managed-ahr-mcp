@@ -1,42 +1,27 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { DtClient } from "../dt-client.js";
+import { getEngine } from "../engine/engine-singleton.js";
+import {
+  analyzeTokenSecurityAudit,
+  type TokenRaw,
+} from "../engine/analyzers/token-security-audit.js";
 
-interface TokenItem {
-  id?: string;
-  name?: string;
-  owner?: string;
-  enabled?: boolean;
-  personalAccessToken?: boolean;
-  creationDate?: string;
-  expirationDate?: string | null;
-  lastUsedDate?: string | null;
-  scopes?: string[];
-  modifiedDate?: string;
-  [k: string]: unknown;
-}
+/**
+ * dt_get_api_tokens — security-focused audit of API tokens.
+ *
+ * Piping: fetches /api/v2/apiTokens (paginated). Engine classifies tokens
+ * into security findings (no-expiration, expired, never-used, stale,
+ * high-privilege, disabled).
+ *
+ * The engine analyzer requires `nowMillis` to be reproducible — we pass
+ * Date.now() at call time.
+ */
 
 interface TokenListResp {
   totalCount?: number;
   nextPageKey?: string | null;
-  apiTokens?: TokenItem[];
-}
-
-const STALE_DAYS = 90;
-const HIGH_PRIV_SCOPES = [
-  "WriteConfig",
-  "settings.write",
-  "tenantTokenManagement.create",
-  "tenantTokenManagement.delete",
-  "credentialVault.write",
-  "TenantTokenRotationServiceAPI",
-];
-
-function daysAgo(iso: string | null | undefined): number | null {
-  if (!iso) return null;
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return null;
-  return Math.floor((Date.now() - t) / 86400000);
+  apiTokens?: TokenRaw[];
 }
 
 export function registerApiTokens(server: McpServer, client: DtClient): void {
@@ -44,16 +29,33 @@ export function registerApiTokens(server: McpServer, client: DtClient): void {
     "dt_get_api_tokens",
     {
       description:
-        "Inventory all API tokens via /api/v2/apiTokens. Returns full list and a security-focused summary: tokens with no expiration, expired-but-still-listed, never-used, unused for 90+ days, high-privilege (write) tokens, scope distribution, owner distribution.",
+        "Inventory API tokens via /api/v2/apiTokens with a security-focused classification: no-expiration, expired-but-listed, never-used, unused for 90+ days, high-privilege (write/admin scopes), disabled. Plus scope and owner distributions. Use this to answer: 'which tokens have no expiration?', 'are there tokens unused for 90+ days?', 'who owns the most write-scoped tokens?', 'which tokens are past their expiration but still listed?', 'show me high-privilege tokens that haven't been used recently'. Args: includeTokens (full list), staleUsageThresholdDays, highPrivilegeScopes.",
       inputSchema: {
         includeTokens: z
           .boolean()
           .optional()
-          .describe("If true, returns the full token list (metadata only — no token values exist on this endpoint). Default false."),
+          .describe(
+            "If true, returns the full token list (metadata only — token values never exist on this endpoint). Default false."
+          ),
+        staleUsageThresholdDays: z
+          .number()
+          .int()
+          .min(1)
+          .optional()
+          .describe(
+            "Override the 'stale usage' threshold. Default 90 days. Tokens last used more than this many days ago are flagged in staleUsage*."
+          ),
+        highPrivilegeScopes: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Override the list of scopes that mark a token as high-privilege. Defaults to: WriteConfig, settings.write, tenantTokenManagement.create, tenantTokenManagement.delete, credentialVault.write, TenantTokenRotationServiceAPI."
+          ),
       },
     },
-    async ({ includeTokens }) => {
-      const all: TokenItem[] = [];
+    async ({ includeTokens, staleUsageThresholdDays, highPrivilegeScopes }) => {
+      // 1. Paginate /api/v2/apiTokens
+      const all: TokenRaw[] = [];
       let nextPageKey: string | null | undefined;
       let pages = 0;
       do {
@@ -62,72 +64,53 @@ export function registerApiTokens(server: McpServer, client: DtClient): void {
               query: { nextPageKey },
             })
           : await client.get<TokenListResp>("/api/v2/apiTokens", {
-              query: { pageSize: 500, fields: "id,name,owner,enabled,personalAccessToken,creationDate,expirationDate,lastUsedDate,scopes,modifiedDate" },
+              query: {
+                pageSize: 500,
+                fields:
+                  "id,name,owner,enabled,personalAccessToken,creationDate,expirationDate,lastUsedDate,scopes,modifiedDate",
+              },
             });
         if (resp.apiTokens) all.push(...resp.apiTokens);
         nextPageKey = resp.nextPageKey ?? null;
         pages++;
       } while (nextPageKey && pages < 50);
 
-      const noExpiration: TokenItem[] = [];
-      const expired: TokenItem[] = [];
-      const neverUsed: TokenItem[] = [];
-      const staleUsage: TokenItem[] = [];
-      const highPriv: TokenItem[] = [];
-      const disabled: TokenItem[] = [];
-      const scopeCounts = new Map<string, number>();
-      const ownerCounts = new Map<string, number>();
-
-      for (const t of all) {
-        if (!t.expirationDate) noExpiration.push(t);
-        else if ((daysAgo(t.expirationDate) ?? 0) > 0) expired.push(t);
-        if (!t.lastUsedDate) neverUsed.push(t);
-        else if ((daysAgo(t.lastUsedDate) ?? 0) > STALE_DAYS) staleUsage.push(t);
-        if ((t.scopes ?? []).some((s) => HIGH_PRIV_SCOPES.includes(s))) highPriv.push(t);
-        if (t.enabled === false) disabled.push(t);
-        for (const s of t.scopes ?? []) scopeCounts.set(s, (scopeCounts.get(s) ?? 0) + 1);
-        ownerCounts.set(t.owner ?? "?", (ownerCounts.get(t.owner ?? "?") ?? 0) + 1);
+      // 2. Engine
+      let summary;
+      try {
+        const engine = await getEngine();
+        summary = await analyzeTokenSecurityAudit(engine, {
+          apiTokens: all,
+          nowMillis: Date.now(),
+          staleUsageThresholdDays,
+          highPrivilegeScopes,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  available: false,
+                  reason: "engine unavailable — compute could not run",
+                  error: msg,
+                  hint: "Set DT_ENGINE_BIN to the path of dt-engine.",
+                },
+                null,
+                2
+              ),
+            },
+          ],
+          isError: true,
+        };
       }
 
-      const trim = (arr: TokenItem[]) =>
-        arr.slice(0, 50).map((t) => ({
-          id: t.id,
-          name: t.name,
-          owner: t.owner,
-          enabled: t.enabled,
-          expirationDate: t.expirationDate,
-          lastUsedDate: t.lastUsedDate,
-          ageDays: daysAgo(t.creationDate),
-          unusedDays: daysAgo(t.lastUsedDate),
-          scopes: t.scopes,
-        }));
-
-      const summary = {
-        totalTokens: all.length,
-        scopeDistribution: Object.fromEntries(scopeCounts),
-        ownerDistribution: Object.fromEntries(ownerCounts),
-        findings: {
-          noExpirationCount: noExpiration.length,
-          noExpirationSample: trim(noExpiration),
-          expiredCount: expired.length,
-          expiredSample: trim(expired),
-          neverUsedCount: neverUsed.length,
-          neverUsedSample: trim(neverUsed),
-          staleUsageOver90dCount: staleUsage.length,
-          staleUsageSample: trim(staleUsage),
-          highPrivilegeCount: highPriv.length,
-          highPrivilegeSample: trim(highPriv),
-          disabledCount: disabled.length,
-        },
-      };
-
+      const body: Record<string, unknown> = { summary };
+      if (includeTokens) body.tokens = all;
       return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(includeTokens ? { summary, tokens: all } : { summary }, null, 2),
-          },
-        ],
+        content: [{ type: "text", text: JSON.stringify(body, null, 2) }],
       };
     }
   );
