@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { DtClient } from "../dt-client.js";
-import { registerSchemaWrapper } from "../tools/schema-wrapper.js";
+import { registerSchemaWrapper, type SchemaWrapperOpts } from "../tools/schema-wrapper.js";
 
 /**
  * Declarative schema-wrapper registrations.
@@ -13,13 +13,11 @@ import { registerSchemaWrapper } from "../tools/schema-wrapper.js";
  * by the registerSchemaWrapper signature.
  */
 
-interface WrapperDef {
-  toolName: string;
-  description: string;
-  schemaIds: string[];
-}
+export type WrapperDef = SchemaWrapperOpts;
 
-const WRAPPERS: WrapperDef[] = [
+/** Exported so scripts/check-schema-drift.ts can diff every probe list
+ *  against the live schema inventory. */
+export const WRAPPERS: WrapperDef[] = [
   {
     toolName: "dt_get_service_anomaly_detection",
     description:
@@ -44,6 +42,23 @@ const WRAPPERS: WrapperDef[] = [
       "builtin:anomaly-detection.kubernetes.cluster",
       "builtin:anomaly-detection.kubernetes.namespace",
       "builtin:anomaly-detection.kubernetes.workload",
+      // live renames verified on 1.346 (old ids above kept for older clusters)
+      "builtin:anomaly-detection.databases",
+      "builtin:anomaly-detection.rum-web",
+      "builtin:anomaly-detection.rum-mobile",
+      // previously-uncovered live AD schemas (1.346)
+      "builtin:anomaly-detection.infrastructure-disks.per-disk-override",
+      "builtin:anomaly-detection.infrastructure-aws",
+      "builtin:anomaly-detection.kubernetes.node",
+      "builtin:anomaly-detection.kubernetes.pvc",
+      "builtin:anomaly-detection.disk-rules",
+      "builtin:anomaly-detection.holiday-aware-baseline",
+      "builtin:davis.anomaly-detectors",
+      "builtin:anomaly.detection.alerts-category-update",
+      // multiObject with HOST / HOST_GROUP / environment scopes — items are
+      // fetched WITHOUT a scopes filter so all scopes appear; each item
+      // carries its own scope field (see disk-edge policy ordering).
+      "builtin:infrastructure.disk.edge.anomaly-detectors",
     ],
   },
   {
@@ -51,6 +66,7 @@ const WRAPPERS: WrapperDef[] = [
     description:
       "Process-monitoring scope: which processes get deep-monitored (drives DDU + host-unit cost). Includes detection flags, monitoring rules, exclusion rules, technology-specific scope.",
     schemaIds: [
+      // pre-1.34x ids (kept for older Managed clusters)
       "builtin:process-availability",
       "builtin:host.process-monitoring",
       "builtin:process-monitoring",
@@ -59,6 +75,15 @@ const WRAPPERS: WrapperDef[] = [
       "builtin:process-monitoring.technology-monitoring",
       "builtin:process-monitoring.docker-process-config",
       "builtin:process-monitoring.exclude-process",
+      // live ids verified on 1.346 (renames)
+      "builtin:processavailability",
+      "builtin:process.custom-process-monitoring-rule",
+      "builtin:process.built-in-process-monitoring-rule",
+      "builtin:process.process-monitoring",
+      "builtin:host.process-groups.monitoring-state",
+      "builtin:process-visibility",
+      "builtin:availability.process-group-alerting",
+      "builtin:process-group.monitoring.state",
     ],
   },
   {
@@ -73,10 +98,17 @@ const WRAPPERS: WrapperDef[] = [
       "builtin:logmonitoring.metric-extraction",
       "builtin:logmonitoring.schemaless-log-metric",
       "builtin:logmonitoring.sensitive-data-masking",
+      "builtin:logmonitoring.sensitive-data-masking-settings",
       "builtin:logmonitoring.timestamp-configuration",
       "builtin:logmonitoring.log-events",
       "builtin:logmonitoring.log-agent-feature-flags",
       "builtin:logmonitoring.logs-on-grail-activate",
+      // previously-uncovered live log schemas (1.346)
+      "builtin:logmonitoring.log-drop-rules",
+      "builtin:logmonitoring.log-custom-attributes",
+      "builtin:logmonitoring.custom-log-source-settings",
+      "builtin:logmonitoring.log-agent-configuration",
+      "builtin:logmonitoring.log-sfm-settings",
     ],
   },
   {
@@ -88,8 +120,8 @@ const WRAPPERS: WrapperDef[] = [
   {
     toolName: "dt_get_alerting_profiles",
     description:
-      "Alerting profiles (builtin:alerting.profile). Control which problem severities/categories route to which integrations and management zones.",
-    schemaIds: ["builtin:alerting.profile"],
+      "Alerting profiles (builtin:alerting.profile) + connectivity alerts. Control which problem severities/categories route to which integrations and management zones.",
+    schemaIds: ["builtin:alerting.profile", "builtin:alerting.connectivity-alerts"],
   },
   {
     toolName: "dt_get_problem_notifications",
@@ -117,6 +149,8 @@ const WRAPPERS: WrapperDef[] = [
       "builtin:cloud.azure",
       "builtin:cloud.gcp",
       "builtin:cloud.kubernetes",
+      "builtin:cloud.kubernetes.monitoring",
+      "builtin:virtualization.vmware",
       "builtin:cloud.cloudfoundry",
       "builtin:cloud.vmware",
       "builtin:cloud-integration.aws",
@@ -134,6 +168,11 @@ const WRAPPERS: WrapperDef[] = [
       "builtin:appsec.notification-alerting-profile",
       "builtin:appsec.notification-integration",
       "builtin:appsec.attack-protection-settings",
+      "builtin:appsec.attack-protection-advanced-config",
+      "builtin:appsec.attack-protection-allowlist-config",
+      "builtin:appsec.notification-attack-alerting-profile",
+      "builtin:appsec.third-party-vulnerability-rule-settings",
+      "builtin:appsec.third-party-vulnerability-kubernetes-label-rule-settings",
     ],
   },
   {
@@ -225,16 +264,20 @@ const WRAPPERS: WrapperDef[] = [
   },
   {
     toolName: "dt_get_business_events",
-    description: "Business Events config (HTTP incoming + OneAgent + OpenTelemetry sources).",
+    description:
+      "Business Events config. NOTE: bizevents schemas are SaaS/Grail-only — on Dynatrace Managed a SURFACE_MISSING result is EXPECTED and does not indicate a configuration gap. (dt_ingest_bizevent against the ingest API is unaffected.)",
     schemaIds: [
       "builtin:bizevents.http.incoming",
       "builtin:bizevents.processing.pipelines",
       "builtin:bizevents.oneagent",
     ],
+    staticNote:
+      "Business Events configuration schemas do not exist on Dynatrace Managed (SaaS/Grail capability). Absence here is expected on Managed clusters.",
   },
   {
     toolName: "dt_get_custom_services_and_key_requests",
-    description: "Custom service definitions + key-request subscriptions.",
+    description:
+      "Custom service definitions + key-request subscriptions. Custom services live in Config v1 on Managed; per-technology endpoints that 404 (dotnet/nodejs on 1.346) are reported as unsupported-on-this-version, not as errors.",
     schemaIds: [
       "builtin:custom-service",
       "builtin:settings.subscriptions.service",
@@ -243,6 +286,13 @@ const WRAPPERS: WrapperDef[] = [
       "builtin:custom-services.go",
       "builtin:custom-services.nodejs",
       "builtin:custom-services.php",
+    ],
+    companionEndpoints: [
+      { path: "/api/config/v1/service/customServices/java", label: "customServices-java", notFoundMeansUnsupported: true },
+      { path: "/api/config/v1/service/customServices/go", label: "customServices-go", notFoundMeansUnsupported: true },
+      { path: "/api/config/v1/service/customServices/php", label: "customServices-php", notFoundMeansUnsupported: true },
+      { path: "/api/config/v1/service/customServices/dotnet", label: "customServices-dotnet", notFoundMeansUnsupported: true },
+      { path: "/api/config/v1/service/customServices/nodejs", label: "customServices-nodejs", notFoundMeansUnsupported: true },
     ],
   },
   {
@@ -257,12 +307,15 @@ const WRAPPERS: WrapperDef[] = [
   },
   {
     toolName: "dt_get_release_monitoring",
-    description: "Release/deployment events + release-stage detection rules.",
+    description:
+      "Release/deployment monitoring. No release* Settings schema exists on Managed 1.338–1.346 — live releases come from the v2 releases API (companion; requires releases.read).",
     schemaIds: [
       "builtin:settings.release-monitoring",
       "builtin:release-monitoring",
       "builtin:span-event-attribute",
+      "builtin:issue-tracking.integration",
     ],
+    companionEndpoints: [{ path: "/api/v2/releases", label: "releases-v2" }],
   },
   {
     toolName: "dt_get_log_monitoring_extras",
@@ -276,13 +329,15 @@ const WRAPPERS: WrapperDef[] = [
   },
   {
     toolName: "dt_get_network_zones",
-    description: "Network zones — control how OneAgent connects to ActiveGates.",
-    schemaIds: ["builtin:network-zones"],
+    description:
+      "Network zones — control how OneAgent connects to ActiveGates. Schema renamed on newer Managed: builtin:networkzones (+ .zones); /api/v2/networkZones companion carries zone health.",
+    schemaIds: ["builtin:network-zones", "builtin:networkzones", "builtin:networkzones.zones"],
+    companionEndpoints: [{ path: "/api/v2/networkZones", label: "networkZones-v2" }],
   },
   {
     toolName: "dt_get_naming_rules",
     description:
-      "Settings 2.0 conditional-naming rules for processes / hosts / services. Probes several likely schema IDs across Managed versions.",
+      "Conditional-naming rules for process groups / hosts / services. NO Settings 2.0 naming schema exists on Managed 1.338–1.346 — the surface is Config v1 (/api/config/v1/conditionalNaming/{type}), returned here via companion endpoints. For per-rule details use dt_get_conditional_naming(type, includeDetails:true).",
     schemaIds: [
       "builtin:conditional-naming.processgroup",
       "builtin:conditional-naming.process-group",
@@ -292,6 +347,11 @@ const WRAPPERS: WrapperDef[] = [
       "builtin:host.naming",
       "builtin:conditional-naming.service",
       "builtin:service.naming",
+    ],
+    companionEndpoints: [
+      { path: "/api/config/v1/conditionalNaming/processGroup", label: "conditionalNaming-processGroup" },
+      { path: "/api/config/v1/conditionalNaming/service", label: "conditionalNaming-service" },
+      { path: "/api/config/v1/conditionalNaming/host", label: "conditionalNaming-host" },
     ],
   },
   {
@@ -311,6 +371,9 @@ const WRAPPERS: WrapperDef[] = [
     schemaIds: [
       "builtin:process-group.advanced-detection-rule",
       "builtin:process-group.detection-flags",
+      // 1.342+ replacement for advanced-detection-rule (verified live)
+      "builtin:process-grouping-rules",
+      "builtin:process-group.cloud-application-workload-detection",
     ],
   },
   {
@@ -322,12 +385,18 @@ const WRAPPERS: WrapperDef[] = [
       "builtin:service-detection.full-web-request",
       "builtin:service-detection.external-web-service",
       "builtin:service-detection.external-web-request",
+      "builtin:ebpf.service.discovery",
     ],
   },
   {
     toolName: "dt_get_request_naming",
-    description: "Request-naming rules and request attributes.",
+    description:
+      "Request-naming rules and request attributes. On Managed these live in Config v1 (/api/config/v1/service/requestNaming + /requestAttributes) — the Settings 2.0 ids are probed for forward-compat but 404 on 1.338–1.346.",
     schemaIds: ["builtin:service.request-naming", "builtin:service.request-attributes"],
+    companionEndpoints: [
+      { path: "/api/config/v1/service/requestNaming", label: "requestNaming-v1" },
+      { path: "/api/config/v1/service/requestAttributes", label: "requestAttributes-v1" },
+    ],
   },
   {
     toolName: "dt_get_oneagent_features_and_enrichment",
@@ -342,8 +411,12 @@ const WRAPPERS: WrapperDef[] = [
       "builtin:logmonitoring.feature-config",
       "builtin:oneagent.features",
       "builtin:oneagent.runtime",
+      "builtin:kubernetes.generic.metadata.enrichment",
       "builtin:eec-local",
       "builtin:eec-remote",
+      // dot-form renames verified on 1.346
+      "builtin:eec.local",
+      "builtin:eec.remote",
     ],
   },
   {
@@ -383,6 +456,59 @@ const WRAPPERS: WrapperDef[] = [
     ],
   },
   {
+    toolName: "dt_get_host_monitoring_modes",
+    description:
+      "Host monitoring posture: monitoring on/off + mode (FULL_STACK vs INFRASTRUCTURE / discovery), advanced host flags, OS-services monitoring rules, and per-host disk exclusion options. Items carry their own scope (environment / host-group / HOST-...). Flag: hosts silently in infra-only or discovery mode (no code-level data, services invisible), monitoring disabled on hosts that still run workloads, OS-service alerting rules that no longer match anything. NOTE: zero objects for a host.monitoring* schema means NO overrides exist — the built-in defaults apply to every host (monitoring enabled; mode from builtin:deployment.oneagent.default-mode via dt_get_update_governance).",
+    schemaIds: [
+      "builtin:host.monitoring",
+      "builtin:host.monitoring.mode",
+      "builtin:host.monitoring.advanced",
+      "builtin:host.monitoring.aix-kernel-extension",
+      "builtin:os-services-monitoring",
+      "builtin:disk.options",
+    ],
+  },
+  {
+    toolName: "dt_get_technology_monitoring",
+    description:
+      "Per-technology OneAgent module toggles (builtin:monitored-technologies.*: Java, .NET, Node.js, Go, PHP, Python, Apache, nginx, IIS, Varnish, Envoy, IIB). A disabled module makes that technology's processes/services invisible — check here FIRST when a workload the operator expects is missing from the topology or the naming audits (it explains 'why is there no Node.js service on this host'). Items carry their own scope (environment or HOST-...).",
+    schemaIds: [
+      "builtin:monitored-technologies.java",
+      "builtin:monitored-technologies.dotnet",
+      "builtin:monitored-technologies.nodejs",
+      "builtin:monitored-technologies.go",
+      "builtin:monitored-technologies.php",
+      "builtin:monitored-technologies.python",
+      "builtin:monitored-technologies.apache",
+      "builtin:monitored-technologies.nginx",
+      "builtin:monitored-technologies.iis",
+      "builtin:monitored-technologies.varnish",
+      "builtin:monitored-technologies.open-tracing-native",
+      "builtin:monitored-technologies.wsmb",
+    ],
+  },
+  {
+    toolName: "dt_get_update_governance",
+    description:
+      "Update governance: OneAgent / ActiveGate update targets, update windows, and OneAgent default deployment mode (builtin:deployment.*). Managed 1.344+ controls AG target-version + update windows here. Flag: no update windows defined (updates land anytime), autoUpdate targets pinned to stale versions.",
+    schemaIds: [
+      "builtin:deployment.oneagent.updates",
+      "builtin:deployment.activegate.updates",
+      "builtin:deployment.management.update-windows",
+      "builtin:deployment.oneagent.default-mode",
+      "builtin:deployment.oneagent.default-version",
+    ],
+  },
+  {
+    toolName: "dt_get_cost_controls",
+    description:
+      "Cost-control configuration: DDU pool limits (builtin:accounting.ddu.limit) and ingest-time metric dimension blocking (builtin:metric.dimensionblocklist — drops high-cardinality dimensions from Metrics v2/OTLP/Prometheus ingest). Pair with dt_get_consumption_summary in Phase 5: consumption metrics show the spend, this shows the configured caps/levers.",
+    schemaIds: [
+      "builtin:accounting.ddu.limit",
+      "builtin:metric.dimensionblocklist",
+    ],
+  },
+  {
     toolName: "dt_get_span_capturing",
     description:
       "Trace sampling / span capturing rules + span-attribute extraction. Direct DDU-traces cost driver.",
@@ -392,6 +518,7 @@ const WRAPPERS: WrapperDef[] = [
       "builtin:span-events",
       "builtin:span-event-attribute",
       "builtin:span-context-propagation",
+      "builtin:span-entry-points",
     ],
   },
 ];

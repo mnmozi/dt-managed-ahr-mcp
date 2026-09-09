@@ -68,7 +68,7 @@ Common alternatives to consider (not all apply to every finding):
 - Host group reassignment — coarse but free; effective when the entire host belongs to one logical scope.
 - Host metadata (oneagentctl set-host-property) — when the signal lives at host level and isn't process-specific.
 - PG detection rule (builtin:process-group.advanced-detection-rule) — when the issue is grouping, not labeling. Use BEFORE proposing a tag fix if processes are mis-grouped.
-- PG conditional naming rule (Settings 2.0 'naming' schemas via dt_get_naming_rules, or v1 via dt_get_conditional_naming type=processGroup) — when the issue is a generic / unhelpful display name. Renames without affecting grouping or tags.
+- PG conditional naming rule (Config v1 via dt_get_conditional_naming type=processGroup — NO Settings 2.0 naming schema exists on Managed) — when the issue is a generic / unhelpful display name. Renames without affecting grouping or tags.
 - Management zone rule — when the goal is access scoping rather than identity.
 - Custom service / request naming — for service-detection / request-routing problems specifically.
 
@@ -150,6 +150,8 @@ Per-host module + technology coverage (mandatory):
   - \`fullStackHostsWithoutLogs\` — every host in FULL_STACK monitoring mode where the log monitoring module is missing or disabled. List each host (name + entityId) and recommend either enabling the log module or downgrading the host to INFRASTRUCTURE if logs aren't intended on it.
   - \`techGapHosts\` — every host where OneAgent detected a technology (Java, Node, .NET, etc.) that has no matching enabled module. List each host with the detected tech vs the enabled modules. Recommend: enable the tech-specific monitoring module, or document why this tech is intentionally excluded.
   - \`misconfiguredHosts\` — modules flagged misconfigured by OneAgent itself.
+- \`dt_get_host_monitoring_modes\` — the settings-side authority on monitoring posture: hosts (or host groups) set to INFRASTRUCTURE/discovery mode or with monitoring disabled, OS-services monitoring rules, per-host disk exclusions. Flag: workload-bearing hosts silently in infra-only mode (explains missing services and code-level data), monitoring disabled at a scope that still has running hosts. Cross-check against \`techGapHosts\`.
+- \`dt_get_technology_monitoring\` — per-technology OneAgent module toggles. When \`techGapHosts\` shows a detected-but-unmonitored technology, THIS is the config lever: report whether the module is disabled at environment scope (deliberate policy) or host scope (likely drift), and name the exact schema/scope to change.
 - \`dt_get_oneagent_features_and_enrichment\` — confirm metadata/context enrichment is enabled (otherwise env-var → tag flow recommended in remediations doesn't work) and that log-agent feature flags aren't disabling capture. If enrichment is off, EVERY auto-tag rule recommendation that keys on env vars must include "enable metadata enrichment first" as a prerequisite.
 
 When the strategy artifacts (suggested tagging strategy, auto-tag strategy) reference env vars as the value source, they MUST verify enrichment is on. If not, the strategy includes a Wave 0 entry: "enable hostmonitoring.metadata-enrichment before any env-var-keyed auto-tag rule can produce values".
@@ -175,7 +177,7 @@ PG/PGI tag taxonomy — derive via the 3-round loop (same engine path as Phase 1
 Cross-check via dt-ahr:
 - \`dt_get_pg_detection_rules\` — for each rule: enabled, condition summary, estimated effect. Flag overbroad / dead / duplicate / mis-scoped.
 - \`dt_get_auto_tags\` rules targeting PG or PGI — flag rules that reference properties valid on PG but not PGI (or vice versa).
-- \`dt_get_naming_rules\` and \`dt_get_conditional_naming(type='processGroup')\` — list active PG naming rules. Flag generic-named PGs that have no rule covering them, and rules whose condition no longer matches anything (dead rules).
+- \`dt_get_conditional_naming(type='processGroup')\` — list active PG naming rules (Config v1; on Managed there is no Settings 2.0 naming schema). Flag generic-named PGs that have no rule covering them, and rules whose condition no longer matches anything (dead rules).
 - For any PG with a generic display name, call \`dt_get_process_properties\` on one of its PGIs to identify a stable property that could feed a naming rule (e.g. env var, k8s label, host group).
 
 PG naming hygiene (engine-backed — run this BEFORE deciding the PG taxonomy section above; downstream tag work in later phases assumes PGs are sanely named):
@@ -280,7 +282,7 @@ Detection / grouping hygiene:
 
 Naming hygiene:
 - Generic SERVICE names (e.g. 'Web service on port 8080', exe-only, hostname-only).
-- \`dt_get_conditional_naming(type='service')\` and \`dt_get_naming_rules\` (Settings 2.0 service-naming candidates) — list active rules.
+- \`dt_get_conditional_naming(type='service')\` — list active service naming rules (Config v1; the only naming surface on Managed).
 - Cross-reference: which generic-named services have NO naming rule covering them?
 - For each, call upstream \`get_entity_details\` on a backing PGI then \`dt_get_process_properties\` to find a stable signal (env var, k8s label, host group) that could feed a service naming rule.
 

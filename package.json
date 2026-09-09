@@ -13,6 +13,9 @@
     "dev": "tsc --watch",
     "smoke": "tsx scripts/smoke.ts",
     "smoke:naming": "tsx scripts/smoke-naming.ts",
+    "graph:naming": "tsx scripts/render-naming-graph.ts",
+    "drift:schemas": "tsx scripts/check-schema-drift.ts",
+    "list:pg-exec": "tsx scripts/list-pg-exec.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"

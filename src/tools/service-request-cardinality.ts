@@ -113,7 +113,7 @@ export function registerServiceRequestCardinality(server: McpServer, client: DtC
                 threshold: flagThreshold,
                 isHighCardinality,
                 hint: isHighCardinality
-                  ? `Service has >=${flagThreshold} distinct request names — strong indicator that a request-naming rule is missing (per-id endpoints leaking through). Check dt_get_request_naming for existing rules covering this service.`
+                  ? `Service has >=${flagThreshold} distinct request names — strong indicator that a request-naming rule is missing (per-id endpoints leaking through). Check dt_get_request_naming (reads Config v1 requestNaming + requestAttributes on Managed) for existing rules covering this service.`
                   : "Cardinality looks bounded; request-naming may not be the issue here.",
                 top,
               },
