@@ -36,6 +36,7 @@ import { registerSimulateTagStrategy } from "../tools/simulate-tag-strategy.js";
 import { registerAuditPgNaming } from "../tools/audit-pg-naming.js";
 import { registerAuditHostNaming } from "../tools/audit-host-naming.js";
 import { registerAuditHostGroups } from "../tools/audit-host-groups.js";
+import { registerAuditServiceNaming } from "../tools/audit-service-naming.js";
 import { registerExportHostgroupRemediation } from "../tools/export-hostgroup-remediation.js";
 
 /** Observability reads: metrics, logs, traces, problems, RUM, billing, tokens. */
@@ -86,5 +87,6 @@ export function registerObservabilityReads(server: McpServer, client: DtClient):
   registerAuditPgNaming(server, client);
   registerAuditHostNaming(server, client);
   registerAuditHostGroups(server, client);
+  registerAuditServiceNaming(server, client);
   registerExportHostgroupRemediation(server);
 }

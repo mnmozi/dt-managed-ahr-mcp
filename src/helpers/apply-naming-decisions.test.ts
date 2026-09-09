@@ -184,3 +184,70 @@ describe("applyNamingDecisions", () => {
     expect(requestMock).not.toHaveBeenCalled();
   });
 });
+
+describe("applyNamingDecisions with createNamingRule", () => {
+  it("creates a conditional-naming rule after tagging (none existing)", async () => {
+    requestMock
+      .mockResolvedValueOnce(makeResp(200, JSON.stringify({ matchedEntitiesCount: 1 }))) // tag write
+      .mockResolvedValueOnce(makeResp(200, JSON.stringify({ values: [] })))              // rule list
+      .mockResolvedValueOnce(makeResp(201, JSON.stringify({ id: "rule-1" })));           // rule create
+    const result = await applyNamingDecisions({
+      client: makeClient(),
+      audit,
+      tool: "dt_apply_pg_naming_rule",
+      reports: [highReport],
+      decisions: [{ entityId: "PG-HIGH", chosenName: "billing-worker", source: "engine_high" }],
+      createNamingRule: true,
+      conditionalNamingType: "processGroup",
+    });
+    expect(result.isError).toBeFalsy();
+    const body = JSON.parse(result.content[0]!.text);
+    expect(body.namingRules).toHaveLength(1);
+    expect(body.namingRules[0]).toMatchObject({ chosenName: "billing-worker", created: true, status: 201 });
+    // rule POST audited too — and the body uses the FLAT condition shape
+    // validated against live Managed 1.342 rules (no {type, conditions} wrapper).
+    const rows = readAuditRecords();
+    expect(rows.length).toBe(2);
+    const ruleBody = rows[1]!.requestBody as { rules: Array<Record<string, unknown>> };
+    expect(ruleBody.rules[0]).toHaveProperty("key");
+    expect(ruleBody.rules[0]).toHaveProperty("comparisonInfo");
+    expect(ruleBody.rules[0]).not.toHaveProperty("conditions");
+  });
+
+  it("skips rule creation when an existing rule already has the nameFormat", async () => {
+    requestMock
+      .mockResolvedValueOnce(makeResp(200, JSON.stringify({ matchedEntitiesCount: 1 }))) // tag write
+      .mockResolvedValueOnce(makeResp(200, JSON.stringify({ values: [{ id: "kargo-1", name: "kargo rule" }] }))) // list
+      .mockResolvedValueOnce(makeResp(200, JSON.stringify({ nameFormat: "billing-worker" })));                   // detail
+    const result = await applyNamingDecisions({
+      client: makeClient(),
+      audit,
+      tool: "dt_apply_pg_naming_rule",
+      reports: [highReport],
+      decisions: [{ entityId: "PG-HIGH", chosenName: "billing-worker", source: "engine_high" }],
+      createNamingRule: true,
+      conditionalNamingType: "processGroup",
+    });
+    const body = JSON.parse(result.content[0]!.text);
+    expect(body.namingRules[0]).toMatchObject({ created: false, skippedExistingId: "kargo-1" });
+    expect(requestMock).toHaveBeenCalledTimes(3); // no create POST
+  });
+
+  it("refuses rule creation when the existing-rule list can't be fetched", async () => {
+    requestMock
+      .mockResolvedValueOnce(makeResp(200, JSON.stringify({ matchedEntitiesCount: 1 }))) // tag write
+      .mockResolvedValue(makeResp(500, "boom"));                                          // list fails (all retries)
+    const result = await applyNamingDecisions({
+      client: makeClient(),
+      audit,
+      tool: "dt_apply_pg_naming_rule",
+      reports: [highReport],
+      decisions: [{ entityId: "PG-HIGH", chosenName: "billing-worker", source: "engine_high" }],
+      createNamingRule: true,
+      conditionalNamingType: "processGroup",
+    });
+    const body = JSON.parse(result.content[0]!.text);
+    expect(body.namingRulesError).toMatch(/refusing to create rules/);
+    expect(body.namingRules).toEqual([]);
+  });
+});

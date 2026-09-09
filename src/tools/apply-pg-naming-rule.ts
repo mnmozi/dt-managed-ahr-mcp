@@ -35,7 +35,7 @@ export function registerApplyPgNamingRule(
     TOOL,
     {
       description:
-        "Apply approved naming decisions to process groups by writing a 'name:<chosenName>' tag on each PG. Tag-based — reversible, audit-friendly. Inputs are the decisions[] array plus the engine reports[] from dt_audit_process_group_naming (so we can validate each decision against the engine's bucket + candidates). Each decision has source: 'engine_high' (auto-pick for high_confidence) | 'ai_proposed' (AI picks from candidates for ambiguous, requires aiRationale) | 'operator_confirmed' (operator picks from candidates) | 'operator_override' (operator supplies any name, loudly logged). Lattice enforced in code: AI cannot upgrade a bucket or invent names. REQUIRES confirm='yes'. Requires DT_WRITE_TOKEN with entities.write scope. Each write is audited with a namingDecision provenance block.",
+        "Apply approved naming decisions to process groups. Writes a reversible 'name:<chosenName>' tag on each PG (this alone does NOT change display names). Pass createNamingRule:true to ALSO create one Config v1 conditional-naming rule per distinct name (keyed on the tag) — the actual display rename; existing rules with the same nameFormat are skipped, never duplicated. Inputs are the decisions[] array plus the engine reports[] from dt_audit_process_group_naming (so we can validate each decision against the engine's bucket + candidates). Each decision has source: 'engine_high' (auto-pick for high_confidence) | 'ai_proposed' (AI picks from candidates for ambiguous, requires aiRationale) | 'operator_confirmed' (operator picks from candidates) | 'operator_override' (operator supplies any name, loudly logged). Lattice enforced in code: AI cannot upgrade a bucket or invent names. REQUIRES confirm='yes'. Requires DT_WRITE_TOKEN with entities.write scope. Each write is audited with a namingDecision provenance block.",
       inputSchema: {
         reports: z
           .array(
@@ -80,10 +80,16 @@ export function registerApplyPgNamingRule(
           .describe(
             "The naming decisions to apply. One per entity. Each decision is validated against the matching report before any write."
           ),
+        createNamingRule: z
+          .boolean()
+          .optional()
+          .describe(
+            "If true, after tagging also create one Config v1 conditional-naming rule per distinct chosen name (POST /api/config/v1/conditionalNaming/) — the real display rename, keyed on the name tag. Dedupes against existing rules by nameFormat. Default false."
+          ),
         confirm: z.literal("yes"),
       },
     },
-    async ({ reports, decisions, confirm }) => {
+    async ({ reports, decisions, createNamingRule, confirm }) => {
       if (confirm !== "yes") return refuse("confirm must be 'yes'");
       return applyNamingDecisions({
         client,
@@ -91,6 +97,8 @@ export function registerApplyPgNamingRule(
         tool: TOOL,
         reports: reports as EntityNamingReport[],
         decisions,
+        createNamingRule,
+        conditionalNamingType: "processGroup",
       });
     }
   );

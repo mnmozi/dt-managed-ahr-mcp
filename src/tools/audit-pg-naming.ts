@@ -41,15 +41,29 @@ export function registerAuditPgNaming(server: McpServer, client: DtClient): void
           .describe(
             "Cap on candidates surfaced per entity. Default 5 — higher values dilute the signal and overwhelm the operator."
           ),
+        explain: z
+          .boolean()
+          .optional()
+          .describe(
+            "If true, each report includes rejectedCandidates[] — every candidate the filter dropped, with the written reason (self-suggestion / generic / too long). Use when asking 'why did/didn't X get a suggestion?'."
+          ),
+        auditAll: z
+          .boolean()
+          .optional()
+          .describe(
+            "If true, emit a report for EVERY entity — healthy names get advisory candidates + corroborations (genericReason empty). Pattern tables always lag new technologies; this mode lets the operator judge each entity. Default false (only generic-named entities)."
+          ),
       },
     },
-    async ({ maxCandidates }) => {
+    async ({ maxCandidates, explain, auditAll }) => {
       try {
         const graphIn = await fetchNamingGraph(client);
         const engine = await getEngine();
         const audit = await analyzeProcessGroupNaming(engine, {
           ...graphIn,
           maxCandidates,
+          explain,
+          auditAll,
         });
         return {
           content: [{ type: "text", text: JSON.stringify(audit, null, 2) }],

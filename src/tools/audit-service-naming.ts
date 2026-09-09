@@ -3,37 +3,31 @@ import { z } from "zod";
 import type { DtClient } from "../dt-client.js";
 import { getEngine } from "../engine/engine-singleton.js";
 import { fetchNamingGraph } from "../engine/naming-graph-fetcher.js";
-import { analyzeHostNaming } from "../engine/analyzers/hosts-naming-audit.js";
+import { analyzeServiceNaming } from "../engine/analyzers/services-naming-audit.js";
 
 /**
- * dt_audit_host_naming — second read tool of the naming-hygiene pipeline.
- * Builds on dt_audit_process_group_naming because host candidates pull
- * from process group evidence (dominant PG, fleet membership).
+ * dt_audit_service_naming — the fourth naming-hygiene audit, completing
+ * the set (PGs, hosts, host groups, services).
  *
- * Two streams of candidates per generic-named host:
- *   1. Own properties: AWS tags (Name / Application / aws:autoscaling:groupName),
- *      GCP labels, Azure tags, Kubernetes node labels / node name, FQDN /
- *      DNS names with meaningful leading segment.
- *   2. Process-group evidence: dominant non-system PG (single app PG → high
- *      confidence), top-N app PGs (2-3 → each medium), fleet membership
- *      (≥ 3 hosts running the same PG set → fleet-match boosts the shared
- *      name to high confidence), bastion hint (only system PGs), shared-
- *      infra hint (many unrelated app PGs).
+ * Flags services whose display name is generic (":80", "_:80", "gunicorn
+ * on port 7100", bare protocols, Dynatrace synthetic names) and extracts
+ * ranked candidates from:
+ *   - the service's OWN endpoints (URL-path analysis — a service serving
+ *     /bookings/* is probably the bookings service)
+ *   - backing PGI k8s container / image / jar
+ *   - backing PG display name (when the PG itself is well-named)
+ *   - web context root
+ *   - sole inbound caller (0.30 tiebreaker)
  *
- * The two streams merge through BucketAndRank — when AWS Name and the
- * dominant PG agree on the same name, the duplicate is collapsed at the
- * higher confidence so the operator sees one strong recommendation, not
- * two near-identical ones.
- *
- * Output uses the same EntityNamingReport shape as the PG audit, so the
- * same dt_apply_*_clarifying_tag lattice applies.
+ * Same buckets + lattice as the other audits; apply approved decisions
+ * with dt_apply_service_clarifying_tag.
  */
-export function registerAuditHostNaming(server: McpServer, client: DtClient): void {
+export function registerAuditServiceNaming(server: McpServer, client: DtClient): void {
   server.registerTool(
-    "dt_audit_host_naming",
+    "dt_audit_service_naming",
     {
       description:
-        "Audit host display names. Flags hosts whose name is generic (cloud-provider default like ip-10-0-1-23 / gke-prod-pool-xxx, bare technology, localhost) and extracts ranked candidate names from BOTH the host's own properties (AWS/GCP/Azure tags, Kubernetes labels, FQDN) AND its process groups (dominant non-system PG, top-N app PG names, fleet-match across same-PG-set hosts, bastion/shared-infra hints). Per-entity output uses the same confidence buckets (high_confidence | ambiguous | no_signal) as dt_audit_process_group_naming. Run AFTER dt_audit_process_group_naming so PG-name candidates feed the host audit cleanly. Args: maxCandidates (default 5).",
+        "Audit service display names. Flags services whose name is generic (port-only ':80'/'_:80', '<tech> on port N' defaults like 'gunicorn on port 7100', bare technology/protocol, Dynatrace synthetic names) and extracts ranked candidate names from the service's own endpoints (URL-path analysis), backing PGI k8s container/image/jar, backing PG display name, web context root, and sole inbound caller. Same confidence buckets (high_confidence | ambiguous | no_signal) as the PG/host audits. Run alongside dt_audit_process_group_naming — they share the same graph fetch. Args: maxCandidates (default 5).",
       inputSchema: {
         maxCandidates: z
           .number()
@@ -62,7 +56,7 @@ export function registerAuditHostNaming(server: McpServer, client: DtClient): vo
       try {
         const graphIn = await fetchNamingGraph(client);
         const engine = await getEngine();
-        const audit = await analyzeHostNaming(engine, {
+        const audit = await analyzeServiceNaming(engine, {
           ...graphIn,
           maxCandidates,
           explain,
@@ -80,7 +74,7 @@ export function registerAuditHostNaming(server: McpServer, client: DtClient): vo
               text: JSON.stringify(
                 {
                   available: false,
-                  reason: "host naming audit could not be computed",
+                  reason: "service naming audit could not be computed",
                   error: msg,
                   hint: "Make sure DT_ENGINE_BIN is set and the cluster is reachable.",
                 },

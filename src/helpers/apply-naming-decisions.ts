@@ -38,6 +38,129 @@ export interface ApplyNamingArgs {
   tool: string;
   reports: EntityNamingReport[];
   decisions: ProposedDecisionInput[];
+  /**
+   * When true, after the name:<value> tags are written, ALSO create one
+   * Config v1 conditional-naming rule per distinct chosen name — the
+   * actual display rename, keyed on the tag. Existing rules with the same
+   * nameFormat are detected and skipped (never duplicated).
+   */
+  createNamingRule?: boolean;
+  /** Config v1 conditional-naming type for this entity kind. Required when createNamingRule is set. */
+  conditionalNamingType?: "processGroup" | "host" | "service";
+}
+
+/** Rule-type + tag-attribute per conditional-naming path. */
+const RULE_META: Record<"processGroup" | "host" | "service", { ruleType: string; tagAttr: string }> = {
+  processGroup: { ruleType: "PROCESS_GROUP", tagAttr: "PROCESS_GROUP_TAGS" },
+  host: { ruleType: "HOST", tagAttr: "HOST_TAGS" },
+  service: { ruleType: "SERVICE", tagAttr: "SERVICE_TAGS" },
+};
+
+interface RuleResult {
+  chosenName: string;
+  created: boolean;
+  skippedExistingId?: string;
+  status?: number;
+  error?: string;
+}
+
+/**
+ * Create conditional-naming rules for the distinct chosen names that were
+ * successfully tagged. Dedupe is by nameFormat: we list existing rules and
+ * fetch each one's detail (bounded) — if any rule already renames to the
+ * same value, we skip (the operator may have created it by hand; observed
+ * live: 14 hand-created "kargo" rules).
+ */
+async function createConditionalNamingRules(
+  client: DtClient,
+  audit: AuditLog,
+  tool: string,
+  type: "processGroup" | "host" | "service",
+  names: string[]
+): Promise<{ rules: RuleResult[]; dedupeError?: string }> {
+  const meta = RULE_META[type];
+  const listPath = `/api/config/v1/conditionalNaming/${type}`;
+
+  // Fetch existing nameFormats. On failure we REFUSE to create (duplicates
+  // are worse than a skipped optimization) and surface the reason.
+  const existingFormats = new Map<string, string>(); // nameFormat -> ruleId
+  try {
+    const list = await client.get<{ values?: Array<{ id: string; name?: string }> }>(listPath);
+    const ids = (list.values ?? []).slice(0, 100);
+    for (const v of ids) {
+      try {
+        const detail = await client.get<{ nameFormat?: string }>(`${listPath}/${encodeURIComponent(v.id)}`);
+        if (detail.nameFormat) existingFormats.set(detail.nameFormat, v.id);
+      } catch {
+        // Unreadable rule — ignore; worst case we skip dedupe for it.
+      }
+    }
+  } catch (err) {
+    return {
+      rules: [],
+      dedupeError: `could not list existing conditional-naming rules (${err instanceof Error ? err.message : String(err)}) — refusing to create rules to avoid duplicates. Create manually or retry.`,
+    };
+  }
+
+  const rules: RuleResult[] = [];
+  for (const name of names) {
+    const existing = existingFormats.get(name);
+    if (existing) {
+      rules.push({ chosenName: name, created: false, skippedExistingId: existing });
+      continue;
+    }
+    // Body shape validated against live rules on Managed 1.342: `rules` is
+    // a FLAT array of conditions ({key, comparisonInfo}) — no inner
+    // {type, conditions} wrapper — and condition keys carry type STATIC.
+    const body = {
+      type: meta.ruleType,
+      enabled: true,
+      displayName: "auto-naming: " + name + " (via name tag)",
+      nameFormat: name,
+      rules: [
+        {
+          key: { attribute: meta.tagAttr, type: "STATIC" },
+          comparisonInfo: {
+            type: "TAG",
+            operator: "EQUALS",
+            negate: false,
+            value: { context: "CONTEXTLESS", key: "name", value: name },
+          },
+        },
+      ],
+    };
+    try {
+      const { status, path, data } = await client.post<unknown>(tool, listPath, body);
+      audit.write({
+        timestamp: new Date().toISOString(),
+        tool,
+        method: "POST",
+        path,
+        validateOnly: false,
+        status,
+        requestBody: body,
+        responseBody: data,
+      });
+      rules.push({ chosenName: name, created: true, status });
+    } catch (err) {
+      if (err instanceof DtApiError) {
+        audit.write({
+          timestamp: new Date().toISOString(),
+          tool,
+          method: "POST",
+          path: err.path,
+          validateOnly: false,
+          status: err.status,
+          requestBody: body,
+          error: err.body,
+        });
+        rules.push({ chosenName: name, created: false, status: err.status, error: err.body.slice(0, 300) });
+        continue;
+      }
+      throw err;
+    }
+  }
+  return { rules };
 }
 
 interface PerResult {
@@ -56,7 +179,7 @@ interface PerResult {
  *   - any per-entity write fails (other writes still attempted).
  */
 export async function applyNamingDecisions(args: ApplyNamingArgs): Promise<ToolResult> {
-  const { client, audit, tool, reports, decisions } = args;
+  const { client, audit, tool, reports, decisions, createNamingRule, conditionalNamingType } = args;
 
   // Index reports for fast per-decision lookup.
   const reportByEntity = new Map<string, EntityNamingReport>();
@@ -163,6 +286,18 @@ export async function applyNamingDecisions(args: ApplyNamingArgs): Promise<ToolR
 
   const appliedCount = results.filter((r) => r.applied).length;
   const failedCount = results.length - appliedCount;
+
+  // Optional second step: real display renames via conditional-naming
+  // rules, one per distinct successfully-tagged name.
+  let namingRules: RuleResult[] | undefined;
+  let namingRulesError: string | undefined;
+  if (createNamingRule && conditionalNamingType && appliedCount > 0) {
+    const names = [...new Set(results.filter((r) => r.applied).map((r) => r.chosenName))];
+    const out = await createConditionalNamingRules(client, audit, tool, conditionalNamingType, names);
+    namingRules = out.rules;
+    namingRulesError = out.dedupeError;
+  }
+
   return {
     content: [
       {
@@ -173,10 +308,14 @@ export async function applyNamingDecisions(args: ApplyNamingArgs): Promise<ToolR
             failed: failedCount,
             total: validated.length,
             results,
+            ...(namingRules ? { namingRules } : {}),
+            ...(namingRulesError ? { namingRulesError } : {}),
             note:
               failedCount > 0
                 ? "Some decisions failed per-entity (see results[]). The lattice validation passed for all — these failures are HTTP-level."
-                : "All decisions written. Downstream tag-strategy rules can now target tag(name:<chosenName>).",
+                : createNamingRule
+                  ? "Tags written. namingRules[] shows the conditional-naming rules created (or skipped as already existing) — display names update on the next entity refresh."
+                  : "All decisions written as name:<value> tags. NOTE: this does NOT change display names — pass createNamingRule:true to also create the conditional-naming rules, or create them manually.",
           },
           null,
           2

@@ -60,7 +60,7 @@ export function validateDecision(
     };
   }
 
-  const candNames = new Set(report.candidates.map((c) => c.name));
+  const candNames = new Set((report.candidates ?? []).map((c) => c.name));
 
   switch (proposed.source) {
     case "engine_high": {
@@ -138,7 +138,7 @@ export function validateDecision(
     bucket: report.decision,
     decider: proposed.source,
     chosenName: proposed.chosenName,
-    engineCandidates: report.candidates.map((c: NamingCandidate) => ({
+    engineCandidates: (report.candidates ?? []).map((c: NamingCandidate) => ({
       source: c.source,
       name: c.name,
       confidence: c.confidence,

@@ -6,26 +6,18 @@ import { refuse } from "../helpers/tool-result.js";
 import { applyNamingDecisions } from "../helpers/apply-naming-decisions.js";
 import type { EntityNamingReport } from "../engine/analyzers/processgroups-naming-audit.js";
 
-const TOOL = "dt_apply_host_clarifying_tag";
+const TOOL = "dt_apply_service_clarifying_tag";
 
 /**
- * dt_apply_host_clarifying_tag — applies operator-approved naming
- * decisions to HOSTs by writing a `name:<chosenName>` tag on each host.
- * Hosts can't be renamed via the Dynatrace API (the displayName is
- * computed from cloud + DNS data), so tagging is the practical way to
- * make name-based downstream rules reliable.
- *
- * Same shell as dt_apply_pg_naming_rule — both delegate to the shared
- * applyNamingDecisions helper. Lattice rules are identical: AI cannot
- * upgrade a bucket or invent names.
- *
- * Workflow:
- *   1. Operator runs dt_audit_host_naming → gets reports[]
- *   2. Operator (and/or AI) picks names per report → builds decisions[]
- *   3. Operator calls THIS tool with both arrays + confirm:"yes"
- *   4. Lattice validation, then per-entity tag write + audit.
+ * dt_apply_service_clarifying_tag — applies operator-approved naming
+ * decisions to SERVICEs by writing a `name:<chosenName>` tag on each.
+ * Renaming a service properly is a Settings 2.0 service-naming rule; the
+ * tag route is reversible and schema-stable, and downstream tag rules can
+ * match `tag(name:bookings)` immediately. Same shell as the PG and host
+ * apply tools — all three delegate to the shared applyNamingDecisions
+ * helper, so the lattice rules are identical.
  */
-export function registerApplyHostClarifyingTag(
+export function registerApplyServiceClarifyingTag(
   server: McpServer,
   client: DtClient,
   audit: AuditLog
@@ -34,7 +26,7 @@ export function registerApplyHostClarifyingTag(
     TOOL,
     {
       description:
-        "Apply approved naming decisions to hosts. Writes a reversible 'name:<chosenName>' tag on each host (does NOT change display names by itself). Pass createNamingRule:true to ALSO create Config v1 conditional-naming rules keyed on the tag — the actual display rename; existing rules with the same nameFormat are skipped. Inputs are the decisions[] array plus the engine reports[] from dt_audit_host_naming (so we can validate each decision against the engine's bucket + candidates). Each decision has source: 'engine_high' (auto-pick for high_confidence) | 'ai_proposed' (AI picks from candidates for ambiguous, requires aiRationale) | 'operator_confirmed' (operator picks from candidates) | 'operator_override' (operator supplies any name, loudly logged). Lattice enforced in code. REQUIRES confirm='yes'. Requires DT_WRITE_TOKEN with entities.write scope. Audited per-entity with full namingDecision provenance.",
+        "Apply approved naming decisions to services. Writes a reversible 'name:<chosenName>' tag on each service (does NOT change display names by itself). Pass createNamingRule:true to ALSO create Config v1 conditional-naming rules keyed on the tag — the actual display rename; existing rules with the same nameFormat are skipped. Inputs are the decisions[] array plus the engine reports[] from dt_audit_service_naming (lattice validation against the engine's bucket + candidates). Each decision has source: 'engine_high' | 'ai_proposed' (requires aiRationale, names ONLY from engine candidates) | 'operator_confirmed' | 'operator_override' (loudly logged). AI cannot upgrade a bucket or invent names. REQUIRES confirm='yes'. Requires DT_WRITE_TOKEN with entities.write scope. Audited per-entity with full namingDecision provenance.",
       inputSchema: {
         reports: z
           .array(
@@ -57,12 +49,12 @@ export function registerApplyHostClarifyingTag(
           )
           .min(1)
           .describe(
-            "The engine reports from the most recent dt_audit_host_naming call. Required for lattice validation."
+            "The engine reports from the most recent dt_audit_service_naming call. Required for lattice validation."
           ),
         decisions: z
           .array(
             z.object({
-              entityId: z.string().min(1).describe("HOST id this decision applies to."),
+              entityId: z.string().min(1).describe("SERVICE id this decision applies to."),
               chosenName: z.string().min(1).describe("The name to write as the 'name:<value>' tag."),
               source: z.enum([
                 "engine_high",
@@ -78,7 +70,7 @@ export function registerApplyHostClarifyingTag(
           )
           .min(1)
           .describe(
-            "The naming decisions to apply. One per host. Each is validated against the matching report before any write."
+            "The naming decisions to apply. One per service. Each is validated against the matching report before any write."
           ),
         createNamingRule: z
           .boolean()
@@ -98,7 +90,7 @@ export function registerApplyHostClarifyingTag(
         reports: reports as EntityNamingReport[],
         decisions,
         createNamingRule,
-        conditionalNamingType: "host",
+        conditionalNamingType: "service",
       });
     }
   );

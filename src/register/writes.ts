@@ -36,6 +36,7 @@ import {
 } from "../tools/extension-actions.js";
 import { registerApplyPgNamingRule } from "../tools/apply-pg-naming-rule.js";
 import { registerApplyHostClarifyingTag } from "../tools/apply-host-clarifying-tag.js";
+import { registerApplyServiceClarifyingTag } from "../tools/apply-service-clarifying-tag.js";
 
 /** All write tools. Wired only when DT_WRITE_TOKEN is set. */
 export function registerWrites(server: McpServer, client: DtClient, audit: AuditLog): void {
@@ -80,6 +81,7 @@ export function registerWrites(server: McpServer, client: DtClient, audit: Audit
   // share the validate-and-write helper.
   registerApplyPgNamingRule(server, client, audit);
   registerApplyHostClarifyingTag(server, client, audit);
+  registerApplyServiceClarifyingTag(server, client, audit);
 
   // SLOs
   registerCreateSlo(server, client, audit);

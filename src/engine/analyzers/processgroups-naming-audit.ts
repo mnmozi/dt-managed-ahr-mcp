@@ -11,6 +11,10 @@ import type { NamingGraphInput } from "../naming-graph-fetcher.js";
 export interface ProcessGroupNamingAuditInput extends NamingGraphInput {
   /** How many candidates to surface per entity (engine default 5). */
   maxCandidates?: number;
+  /** Attach rejectedCandidates (with written reasons) to every report. */
+  explain?: boolean;
+  /** Report EVERY entity (advisory candidates for healthy names too). */
+  auditAll?: boolean;
 }
 
 export interface NamingCandidate {
@@ -27,9 +31,14 @@ export interface EntityNamingReport {
   entityType: string;
   currentName: string;
   genericReason: string;
-  candidates: NamingCandidate[];
+  candidates: NamingCandidate[] | null;
   topCandidate?: string;
   decision: NamingDecision;
+  /** Candidates matching the current name — evidence it's right. */
+  corroborating?: NamingCandidate[];
+  /** Present only when the audit ran with explain=true — every candidate a
+   *  branch produced that the central filter dropped, with the reason. */
+  rejectedCandidates?: Array<NamingCandidate & { reason: string }>;
 }
 
 export interface ProcessGroupNamingCounts {
