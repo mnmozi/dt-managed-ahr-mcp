@@ -217,7 +217,7 @@ describe("applyNamingDecisions with createNamingRule", () => {
   it("skips rule creation when an existing rule already has the nameFormat", async () => {
     requestMock
       .mockResolvedValueOnce(makeResp(200, JSON.stringify({ matchedEntitiesCount: 1 }))) // tag write
-      .mockResolvedValueOnce(makeResp(200, JSON.stringify({ values: [{ id: "kargo-1", name: "kargo rule" }] }))) // list
+      .mockResolvedValueOnce(makeResp(200, JSON.stringify({ values: [{ id: "shop-1", name: "shop rule" }] }))) // list
       .mockResolvedValueOnce(makeResp(200, JSON.stringify({ nameFormat: "billing-worker" })));                   // detail
     const result = await applyNamingDecisions({
       client: makeClient(),
@@ -229,7 +229,7 @@ describe("applyNamingDecisions with createNamingRule", () => {
       conditionalNamingType: "processGroup",
     });
     const body = JSON.parse(result.content[0]!.text);
-    expect(body.namingRules[0]).toMatchObject({ created: false, skippedExistingId: "kargo-1" });
+    expect(body.namingRules[0]).toMatchObject({ created: false, skippedExistingId: "shop-1" });
     expect(requestMock).toHaveBeenCalledTimes(3); // no create POST
   });
 

@@ -69,7 +69,7 @@ interface RuleResult {
  * successfully tagged. Dedupe is by nameFormat: we list existing rules and
  * fetch each one's detail (bounded) — if any rule already renames to the
  * same value, we skip (the operator may have created it by hand; observed
- * live: 14 hand-created "kargo" rules).
+ * live: 14 hand-created rules).
  */
 async function createConditionalNamingRules(
   client: DtClient,

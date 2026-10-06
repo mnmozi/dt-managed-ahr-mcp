@@ -58,7 +58,7 @@ If a number doesn't exist as a metric, ingest it as a custom metric with a fixed
    - `GET /api/v2/settings/objects` counts the objects in `builtin:logmonitoring.log-events`, `builtin:logmonitoring.schemaless-log-metric`, and processing rules (`builtin:logmonitoring.log-dpp-rules`).
    - `POST /api/v2/metrics/ingest` sends lines such as:
      ```
-     ahr.hostgroup.host_count,host_group="kargo-app" 1
+     ahr.hostgroup.host_count,host_group="shop-app" 1
      ahr.hosts.ungrouped_count 0
      ahr.config.log_event_rules 3
      ahr.config.log_metric_rules 21
@@ -77,11 +77,11 @@ Suggested next session: build the collector (TypeScript in `scripts/` to match t
 Use these numbers to check that the collector's metrics come out right.
 
 - **Hosts:** 10 in total, all Linux and all FULL_STACK. All at 100% availability.
-- **Host groups:** 7 groups and 0 ungrouped hosts. Five groups have one VM each: `kargo-app`, `kargo-customs`, `kargo-svc`, `kargo-tariff`, `kargo-web`. `dev` has 4 hosts and is flagged as a generic name. `hang-demo-managed` has 1.
+- **Host groups:** 7 groups and 0 ungrouped hosts. Five groups have one VM each: `shop-app`, `shop-customs`, `shop-svc`, `shop-tariff`, `shop-web`. `dev` has 4 hosts and is flagged as a generic name. `hang-demo-managed` has 1.
 - **Log pipeline:** 13 storage rules, 42 processing rules (4 of them custom), 2 bucket rules, 1 timestamp config. Logs on Grail is not active. Agent flags: container and journald detectors are on.
 - **Events from logs:** 3 rules, all enabled:
-  - "7orr payment processed" (INFO)
-  - "7orr checkout failure" (ERROR, Davis-merged)
+  - "shop payment processed" (INFO)
+  - "shop checkout failure" (ERROR, Davis-merged)
   - "Payment Initiate Request Detected" (annotation)
 - **Log metric extraction:** 21 rules, which produce 22 `log.*` metrics. They cover cart/checkout, logins, notifications, SSR, postgres, and error/exception counts.
 - **Consumption:** of the `builtin:billing.*` metrics checked, only `full_stack_monitoring.usage_per_host` (about 3,230 over 7 days) and `synthetic.actions` (0) exist. `hostunits`, `ddu.*`, and `usersession.*` return 404.

@@ -14,8 +14,8 @@ function clientWith(routes: Record<string, (q?: Record<string, unknown>) => unkn
 
 const v1Host = {
   hostInfo: {
-    displayName: "ip-172-28-201-208.eu-central-1.compute.internal",
-    entityId: "HOST-ACD4B689AF6A4220",
+    displayName: "ip-10-0-0-1.ec2.internal",
+    entityId: "HOST-0000000000000001",
     osType: "LINUX",
     monitoringMode: "FULL_STACK",
     agentVersion: { major: 1, minor: 346, revision: 12, sourceRevision: "abc" },
@@ -37,8 +37,8 @@ describe("versionString", () => {
 describe("normalizeV1Host", () => {
   it("maps v1 names onto the v2 contract without losing raw fields", () => {
     const h = normalizeV1Host(v1Host as never);
-    expect(h.hostInfo?.hostName).toBe("ip-172-28-201-208.eu-central-1.compute.internal");
-    expect(h.hostInfo?.entityId).toBe("HOST-ACD4B689AF6A4220");
+    expect(h.hostInfo?.hostName).toBe("ip-10-0-0-1.ec2.internal");
+    expect(h.hostInfo?.entityId).toBe("HOST-0000000000000001");
     expect(h.currentVersion).toBe("1.346.12");
     expect(h.detectedTechnologies).toEqual([{ type: "KUBERNETES", version: "v1.35" }]);
     expect(h.modules).toEqual([{ moduleType: "LOG_ANALYTICS", enabled: true }]);
@@ -76,7 +76,7 @@ describe("fetchOneAgents", () => {
     const inv = await fetchOneAgents(client);
     expect(inv.source).toBe("v1");
     expect(v1Query?.includeDetails).toBe(true);
-    expect(inv.hosts[0]?.hostInfo?.hostName).toBe("ip-172-28-201-208.eu-central-1.compute.internal");
+    expect(inv.hosts[0]?.hostInfo?.hostName).toBe("ip-10-0-0-1.ec2.internal");
     expect(inv.hosts[0]?.currentVersion).toBe("1.346.12");
   });
 

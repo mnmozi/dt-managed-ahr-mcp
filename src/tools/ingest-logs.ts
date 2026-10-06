@@ -19,8 +19,8 @@ const TOOL = "dt_ingest_logs";
  *
  * The closing-the-loop test for log-event rules:
  *   1. dt_ingest_logs with `content: "payment failed: timeout"` +
- *      `container.name: "7orr-notifications"` + `level: "ERROR"`
- *   2. dt_search_logs with `container.name="7orr-notifications"` to confirm
+ *      `container.name: "shop-notifications"` + `level: "ERROR"`
+ *   2. dt_search_logs with `container.name="shop-notifications"` to confirm
  *      it landed with the expected extracted attributes
  *   3. If your custom DPP rule (or log-event rule) fired, confirm via the
  *      Logs UI or by checking problems/events

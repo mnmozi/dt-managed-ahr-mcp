@@ -7,7 +7,7 @@ import { DtApiError, type DtClient } from "../dt-client.js";
  *
  * Find entities by selector — the inverse of "I have a tag and I want to see
  * who has it". Selector syntax mirrors the dashboard / SLO selectors:
- *   type(SERVICE),tag(team:7orr)
+ *   type(SERVICE),tag(team:payments)
  *   type(HOST),hostGroupName(prod-web)
  *   type(PROCESS_GROUP_INSTANCE),fromRelationships.runs(type(HOST),hostGroupName(prod-web))
  *
@@ -19,7 +19,7 @@ export function registerSearchEntities(server: McpServer, client: DtClient): voi
     "dt_search_entities",
     {
       description:
-        "Find entities by selector (GET /api/v2/entities). Selector syntax: type(SERVICE),tag(team:7orr). Returns entityId + displayName + tags + properties. Auto-paginates up to 10 pages; pass singlePage:true to disable.",
+        "Find entities by selector (GET /api/v2/entities). Selector syntax: type(SERVICE),tag(team:payments). Returns entityId + displayName + tags + properties. Auto-paginates up to 10 pages; pass singlePage:true to disable.",
       inputSchema: {
         entitySelector: z
           .string()

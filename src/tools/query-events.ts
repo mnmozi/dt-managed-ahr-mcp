@@ -32,7 +32,7 @@ export function registerQueryEvents(server: McpServer, client: DtClient): void {
           .string()
           .optional()
           .describe(
-            "Entity selector to restrict to events attached to specific entities. Examples: 'type(SERVICE),tag(team:7orr)'."
+            "Entity selector to restrict to events attached to specific entities. Examples: 'type(SERVICE),tag(team:payments)'."
           ),
         from: z.string().optional().describe("Start time. Default 'now-24h'."),
         to: z.string().optional().describe("End time. Default 'now'."),

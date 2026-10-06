@@ -76,7 +76,7 @@ read-only usage is unchanged.
 | `dt_get_dashboard_context` | **One-call preflight bundle** for dashboard creation. Returns: management zones (id+name), entity types, metrics catalog summary (counts by prefix) + a sample of metric ids. Each section degrades independently. Use this BEFORE constructing dashboard payload so you only reference real MZs / entity types / metrics. |
 | `dt_search_logs` | `POST /api/v2/logs/search` — search ingested logs. The "is my log line landing with the right attributes?" tool. Returns matching records + the distinct attribute keys Dynatrace extracted. Read-only (uses read token). |
 | `dt_query_metrics` | `GET /api/v2/metrics/query` — run a metric selector + timeframe + resolution. Returns raw Dynatrace response **and** a flattened compact form (one entry per series with first/last point, min/max/avg) for easy LLM analysis. |
-| `dt_search_entities` | `GET /api/v2/entities` — find entities by selector (e.g. `type(SERVICE),tag(team:7orr)`). Auto-paginates up to 10 pages by default. |
+| `dt_search_entities` | `GET /api/v2/entities` — find entities by selector (e.g. `type(SERVICE),tag(team:payments)`). Auto-paginates up to 10 pages by default. |
 | `dt_get_problem` | `GET /api/v2/problems/{id}` — full single-problem detail. Companion to `dt_get_problem_history` (which is the list/analysis view). |
 | `dt_get_trace` | `POST /api/v2/spans/query` — look up spans by traceId (typical) or arbitrary spanSelector. Read-via-POST; token needs `traces.lookup`. Falls back gracefully with a note if endpoint isn't on this Managed version. |
 | `dt_query_usql` | `GET /api/v1/userSessionQueryLanguage/table` — run USQL queries over RUM session data. Flattens the column-oriented response into row objects. Token needs `DTAQLAccess`. |

@@ -7,7 +7,7 @@ with the commit/date when closed.
 
 ### Naming pipeline
 - **No systemd-unit name source.** The one signal that would have named
-  `tracking-service` directly (unit `kargo-tracking`) isn't surfaced by
+  `tracking-service` directly (unit `shop-tracking`) isn't surfaced by
   OneAgent as an entity property we've found. Check PGI properties for unit
   metadata; else document as blind spot.
 - **Short-lived processes are invisible.** Batch/timer workloads (e.g. a

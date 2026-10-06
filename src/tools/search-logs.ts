@@ -10,7 +10,7 @@ import { DtApiError, type DtClient } from "../dt-client.js";
  * field set Dynatrace extracted.
  *
  * Query language is Dynatrace's log search syntax — same as the Logs UI:
- *   container_name="7orr-notifications" AND content="ERROR"
+ *   container_name="shop-notifications" AND content="ERROR"
  *   process.technology="nginx" AND loglevel="ERROR"
  *   snmp.trap_oid="F5-BIGIP-COMMON-MIB::*"
  *
@@ -35,7 +35,7 @@ export function registerSearchLogs(server: McpServer, client: DtClient): void {
           .string()
           .min(1)
           .describe(
-            "Log search query. Examples: 'container_name=\"7orr-notifications\"', 'process.technology=\"nginx\" AND loglevel=\"ERROR\"', 'content=\"timeout\"'. Empty match-all not allowed — pass at least one predicate."
+            "Log search query. Examples: 'container_name=\"shop-notifications\"', 'process.technology=\"nginx\" AND loglevel=\"ERROR\"', 'content=\"timeout\"'. Empty match-all not allowed — pass at least one predicate."
           ),
         from: z
           .string()

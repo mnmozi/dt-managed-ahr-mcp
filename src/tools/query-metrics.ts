@@ -48,7 +48,7 @@ export function registerQueryMetrics(server: McpServer, client: DtClient): void 
           .string()
           .optional()
           .describe(
-            "Optional entity selector to scope the query, e.g. 'type(SERVICE),tag(team:7orr)'."
+            "Optional entity selector to scope the query, e.g. 'type(SERVICE),tag(team:payments)'."
           ),
         mzSelector: z
           .string()
