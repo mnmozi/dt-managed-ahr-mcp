@@ -22,5 +22,5 @@ export function registerCoreReads(server: McpServer, client: DtClient, cfg: DtCo
   registerListTagsForEntity(server, client);
   registerGetProcessProperties(server, client);
   registerConditionalNaming(server, client);
-  registerWhoami(server, cfg);
+  registerWhoami(server, client, cfg);
 }

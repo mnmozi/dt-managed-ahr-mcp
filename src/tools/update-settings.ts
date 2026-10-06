@@ -7,6 +7,12 @@ const TOOL = "dt_update_settings";
 
 /**
  * PUT /api/v2/settings/objects/{objectId} — updates an existing Settings 2.0 object.
+ *
+ * Before a real (non-dryRun) update we GET the current object and store it
+ * in the audit row as `priorObject`, so an update is as reversible as a
+ * delete: re-apply the prior value with dt_update_settings. A failed
+ * pre-fetch is reported in the audit row but does not block the update —
+ * the caller explicitly confirmed it.
  */
 export function registerUpdateSettings(
   server: McpServer,
@@ -17,7 +23,7 @@ export function registerUpdateSettings(
     TOOL,
     {
       description:
-        "Update an existing Settings 2.0 object by objectId. REQUIRES confirm='yes'. Set dryRun=true to validate without applying. Requires DT_WRITE_TOKEN. Every call is audited.",
+        "Update an existing Settings 2.0 object by objectId (PUT /api/v2/settings/objects/{id}, FULL replacement of value). The prior object is fetched first and stored in the audit log so the update is reversible. REQUIRES confirm='yes'. Set dryRun=true to validate without applying (validateOnly=true). Requires DT_WRITE_TOKEN with settings.write. Every call is audited.",
       inputSchema: {
         objectId: z.string().min(1).describe("The objectId to update."),
         value: z
@@ -41,6 +47,23 @@ export function registerUpdateSettings(
       }
       const encoded = encodeURIComponent(objectId);
       const opts = dryRun ? { query: { validateOnly: true } } : undefined;
+
+      // Reversibility: capture the current object before overwriting it.
+      let priorObject: unknown = null;
+      let priorFetchError: string | undefined;
+      if (!dryRun) {
+        try {
+          priorObject = await client.get<unknown>(`/api/v2/settings/objects/${encoded}`);
+        } catch (err) {
+          if (err instanceof DtApiError && err.status === 404) {
+            return {
+              content: [{ type: "text", text: `refused: object '${objectId}' not found (404) — nothing to update` }],
+              isError: true,
+            };
+          }
+          priorFetchError = err instanceof Error ? err.message : String(err);
+        }
+      }
       try {
         const { status, path, data } = await client.put<unknown>(
           TOOL,
@@ -56,7 +79,7 @@ export function registerUpdateSettings(
           validateOnly: Boolean(dryRun),
           objectId,
           status,
-          requestBody: { value },
+          requestBody: { value, priorObject, priorFetchError },
           responseBody: data,
         });
         return {
@@ -64,7 +87,17 @@ export function registerUpdateSettings(
             {
               type: "text",
               text: JSON.stringify(
-                { updated: !dryRun, validated: Boolean(dryRun), status, response: data },
+                {
+                  updated: !dryRun,
+                  validated: Boolean(dryRun),
+                  status,
+                  response: data,
+                  reversibleVia: dryRun
+                    ? undefined
+                    : priorObject
+                      ? "audit log entry contains priorObject — re-apply its value with dt_update_settings to roll back"
+                      : `prior object could not be captured (${priorFetchError ?? "unknown"}); roll-back must come from another source`,
+                },
                 null,
                 2
               ),

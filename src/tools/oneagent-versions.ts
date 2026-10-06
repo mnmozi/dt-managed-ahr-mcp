@@ -1,11 +1,12 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { DtApiError, type DtClient } from "../dt-client.js";
+import type { DtClient } from "../dt-client.js";
 import { getEngine } from "../engine/engine-singleton.js";
 import {
   analyzeOneAgentDistribution,
   type OneAgentHostRaw,
 } from "../engine/analyzers/oneagent-distribution.js";
+import { fetchLatestInstallerVersions } from "../helpers/installer-versions.js";
 
 /**
  * dt_get_oneagent_versions — audit OneAgent rollout health.
@@ -27,70 +28,14 @@ interface OneAgentListResponse {
   hosts?: OneAgentHostRaw[];
 }
 
-/**
- * Fetches the cluster's latest available OneAgent version for each OS that
- * actually appears in the host inventory. Returns a map osType → version.
- *
- * Tolerant: per-OS failures don't fail the whole call. If the endpoint
- * doesn't exist on this Managed version, returns an empty map and the
- * analyzer falls back to "no per-OS reference" mode for affected hosts.
- *
- * Endpoint candidates (varies by Managed version):
- *   1. GET /api/v1/deployment/installer/agent/{os}/default/latest/metainfo
- *      → returns { latestAgentVersion: "1.295.0" }
- *   2. GET /api/v1/deployment/installer/agent/versions/{os}
- *      → returns { availableVersions: ["1.290.0","1.291.0",...] }
- *
- * We try (1) first, fall back to (2) per OS.
+/*
+ * The per-OS "latest available" lookup lives in helpers/installer-versions.ts
+ * (shared with the ActiveGate tool). It maps the inventory osType (LINUX →
+ * unix, …) to the Deployment API path segment, tries
+ * /api/v1/deployment/installer/agent/{osType}/default/latest/metainfo and
+ * falls back to /api/v1/deployment/installer/agent/versions/{osType}/default.
+ * Needs the InstallerDownload scope; per-OS failures are reported, not fatal.
  */
-async function fetchLatestVersionsByOs(
-  client: DtClient,
-  osTypes: Set<string>
-): Promise<{ map: Record<string, string>; errors: Array<{ osType: string; error: string }> }> {
-  const map: Record<string, string> = {};
-  const errors: Array<{ osType: string; error: string }> = [];
-
-  for (const osType of osTypes) {
-    if (osType === "UNKNOWN" || osType === "") continue;
-    const osLower = osType.toLowerCase();
-    try {
-      const resp = await client.get<{ latestAgentVersion?: string }>(
-        `/api/v1/deployment/installer/agent/${encodeURIComponent(osLower)}/default/latest/metainfo`
-      );
-      if (resp?.latestAgentVersion) {
-        map[osType] = resp.latestAgentVersion;
-        continue;
-      }
-    } catch {
-      // fall through to v2
-    }
-    try {
-      const resp = await client.get<{ availableVersions?: string[] }>(
-        `/api/v1/deployment/installer/agent/versions/${encodeURIComponent(osLower)}`
-      );
-      const versions = resp?.availableVersions ?? [];
-      if (versions.length > 0) {
-        // last entry is typically newest; if not, the engine's comparison
-        // logic doesn't depend on a perfectly-correct latest — it just
-        // computes minorBehind against whatever we say is latest.
-        const last = versions[versions.length - 1];
-        if (typeof last === "string") {
-          map[osType] = last;
-          continue;
-        }
-      }
-    } catch (err) {
-      const msg =
-        err instanceof DtApiError
-          ? `HTTP ${err.status}`
-          : err instanceof Error
-            ? err.message
-            : String(err);
-      errors.push({ osType, error: msg });
-    }
-  }
-  return { map, errors };
-}
 
 export function registerOneAgentVersions(server: McpServer, client: DtClient): void {
   server.registerTool(
@@ -109,7 +54,7 @@ export function registerOneAgentVersions(server: McpServer, client: DtClient): v
           .boolean()
           .optional()
           .describe(
-            "If true, skip fetching the cluster's latest-version-per-OS. The 'behind latest' fields will be absent. Useful when the deployment installer endpoint is unavailable or the token lacks scope."
+            "If true, skip fetching the cluster's latest-version-per-OS (Deployment API, needs the InstallerDownload scope). The 'behind latest' fields will be absent."
           ),
         osTypeOverrides: z
           .record(z.string(), z.string())
@@ -147,7 +92,7 @@ export function registerOneAgentVersions(server: McpServer, client: DtClient): v
       let latestVersionsByOs: Record<string, string> = {};
       let latestLookupErrors: Array<{ osType: string; error: string }> = [];
       if (!skipLatestLookup) {
-        const { map, errors } = await fetchLatestVersionsByOs(client, observedOsTypes);
+        const { map, errors } = await fetchLatestInstallerVersions(client, observedOsTypes, "agent");
         latestVersionsByOs = map;
         latestLookupErrors = errors;
       }

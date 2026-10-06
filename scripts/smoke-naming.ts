@@ -158,7 +158,7 @@ async function main(): Promise<void> {
       console.error(`→ FAIL: HTTP ${err.status} on ${err.path}`);
       console.error(`   body: ${err.body.slice(0, 400)}`);
       if (err.status === 401) console.error("   hint: token invalid / wrong env id");
-      if (err.status === 403) console.error("   hint: token missing ReadConfig scope");
+      if (err.status === 403) console.error("   hint: token missing settings.read scope");
     } else {
       console.error(`→ FAIL: ${err instanceof Error ? err.message : String(err)}`);
     }

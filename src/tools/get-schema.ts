@@ -101,7 +101,7 @@ export function registerGetSchema(server: McpServer, client: DtClient): void {
     "dt_get_schema",
     {
       description:
-        "Fetch the full Settings 2.0 schema definition for a given schemaId. Returns the structure (fields, types, enums, constraints, defaults) that you need to construct a valid payload for dt_create_settings / dt_update_settings (in dt-write-mcp). Use mode='full' for the raw schema or mode='summary' for a flattened LLM-friendly field list.",
+        "Fetch the full Settings 2.0 schema definition for a given schemaId. Returns the structure (fields, types, enums, constraints, defaults) that you need to construct a valid payload for dt_create_settings / dt_update_settings (registered in this server when DT_WRITE_TOKEN is set). Use mode='full' for the raw schema or mode='summary' for a flattened LLM-friendly field list.",
       inputSchema: {
         schemaId: z
           .string()

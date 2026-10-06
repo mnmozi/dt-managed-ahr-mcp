@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { DtClient } from "../dt-client.js";
+import { DtApiError, type DtClient } from "../dt-client.js";
 import { getEngine } from "../engine/engine-singleton.js";
 import {
   analyzeTokenSecurityAudit,
@@ -54,26 +54,51 @@ export function registerApiTokens(server: McpServer, client: DtClient): void {
       },
     },
     async ({ includeTokens, staleUsageThresholdDays, highPrivilegeScopes }) => {
-      // 1. Paginate /api/v2/apiTokens
+      // 1. Paginate /api/v2/apiTokens.
+      //    `fields` is ADDITIVE on this endpoint: id, name, enabled, owner and
+      //    creationDate are always returned; everything else must be requested
+      //    with a '+' prefix. Bare field names are rejected with 400.
       const all: TokenRaw[] = [];
       let nextPageKey: string | null | undefined;
       let pages = 0;
-      do {
-        const resp = nextPageKey
-          ? await client.get<TokenListResp>("/api/v2/apiTokens", {
-              query: { nextPageKey },
-            })
-          : await client.get<TokenListResp>("/api/v2/apiTokens", {
-              query: {
-                pageSize: 500,
-                fields:
-                  "id,name,owner,enabled,personalAccessToken,creationDate,expirationDate,lastUsedDate,scopes,modifiedDate",
+      try {
+        do {
+          const resp = nextPageKey
+            ? await client.get<TokenListResp>("/api/v2/apiTokens", {
+                query: { nextPageKey },
+              })
+            : await client.get<TokenListResp>("/api/v2/apiTokens", {
+                query: {
+                  pageSize: 500,
+                  fields: "+personalAccessToken,+expirationDate,+lastUsedDate,+modifiedDate,+scopes",
+                },
+              });
+          if (resp.apiTokens) all.push(...resp.apiTokens);
+          nextPageKey = resp.nextPageKey ?? null;
+          pages++;
+        } while (nextPageKey && pages < 50);
+      } catch (err) {
+        if (err instanceof DtApiError) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    available: false,
+                    error: { status: err.status, body: err.body.slice(0, 500) },
+                    hint: err.status === 403 ? "token needs the apiTokens.read scope" : undefined,
+                  },
+                  null,
+                  2
+                ),
               },
-            });
-        if (resp.apiTokens) all.push(...resp.apiTokens);
-        nextPageKey = resp.nextPageKey ?? null;
-        pages++;
-      } while (nextPageKey && pages < 50);
+            ],
+            isError: true,
+          };
+        }
+        throw err;
+      }
 
       // 2. Engine
       let summary;

@@ -6,7 +6,6 @@ import { DtApiError, type DtClient } from "../dt-client.js";
  * dt_get_dashboard_context — one read that gathers everything a dashboard
  * builder needs to know about THIS tenant before constructing payload:
  *
- *   - cluster bootstrap (cluster URL, env id) so the caller can render links
  *   - management zones available (id + name) — needed for dashboardFilter +
  *     tileFilter references
  *   - entity types known on the tenant — confirms what type strings are valid
@@ -28,7 +27,7 @@ export function registerGetDashboardContext(server: McpServer, client: DtClient)
     "dt_get_dashboard_context",
     {
       description:
-        "Pre-flight context bundle for dashboard creation. Returns: cluster info, all management zones (id+name), entity types, a metrics catalog SUMMARY (counts by prefix) plus a sample of metric ids. Run this BEFORE constructing a dashboard payload — it guarantees you only reference MZs that exist, entity types that exist, and metric keys that are real on this tenant. Each section degrades independently if the underlying endpoint errors.",
+        "Pre-flight context bundle for dashboard creation. Returns: all management zones (id+name), entity types, a metrics catalog SUMMARY (counts by prefix) plus a sample of metric ids. Run this BEFORE constructing a dashboard payload — it guarantees you only reference MZs that exist, entity types that exist, and metric keys that are real on this tenant. Each section degrades independently if the underlying endpoint errors.",
       inputSchema: {
         metricsSampleSize: z
           .number()
@@ -46,12 +45,7 @@ export function registerGetDashboardContext(server: McpServer, client: DtClient)
     async ({ metricsSampleSize, includeCustomMetrics }) => {
       const out: Record<string, unknown> = {};
 
-      // ---------- cluster bootstrap ----------
-      out.cluster = {
-        // We pull this from a whoami-style call below if available, but the
-        // client itself doesn't expose the config. Use raw_get on a known
-        // endpoint instead.
-      };
+      // (Cluster URL / env id are reported by dt_whoami; not duplicated here.)
 
       // ---------- management zones ----------
       out.managementZones = await safeSection(async () => {

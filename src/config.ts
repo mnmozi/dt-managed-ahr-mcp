@@ -18,8 +18,8 @@ export class ConfigError extends Error {
   }
 }
 
-function requireEnv(name: string): string {
-  const v = process.env[name];
+function requireEnv(env: NodeJS.ProcessEnv, name: string): string {
+  const v = env[name];
   if (!v || !v.trim()) {
     throw new ConfigError(`${name} is not set`);
   }
@@ -72,13 +72,13 @@ function resolveToken(
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): DtConfig {
-  const clusterUrlRaw = requireEnv("DT_CLUSTER_URL");
+  const clusterUrlRaw = requireEnv(env, "DT_CLUSTER_URL");
   const clusterUrl = clusterUrlRaw.replace(/\/+$/, "");
   if (!/^https?:\/\//.test(clusterUrl)) {
     throw new ConfigError(`DT_CLUSTER_URL must start with http:// or https://, got: ${clusterUrlRaw}`);
   }
 
-  const envId = requireEnv("DT_ENV_ID");
+  const envId = requireEnv(env, "DT_ENV_ID");
   if (!/^[a-z0-9-]+$/i.test(envId)) {
     throw new ConfigError(`DT_ENV_ID does not look like a Dynatrace environment id: ${envId}`);
   }

@@ -23,6 +23,7 @@ import {
   type Decider,
 } from "./naming-decision.js";
 import type { EntityNamingReport } from "../engine/analyzers/processgroups-naming-audit.js";
+import { invalidateTagGraphCache } from "../engine/tag-graph-fetcher.js";
 
 export interface ProposedDecisionInput {
   entityId: string;
@@ -163,6 +164,8 @@ export async function applyNamingDecisions(args: ApplyNamingArgs): Promise<ToolR
 
   const appliedCount = results.filter((r) => r.applied).length;
   const failedCount = results.length - appliedCount;
+  // Tags changed → the cached entity graph no longer reflects the cluster.
+  if (appliedCount > 0) invalidateTagGraphCache(client);
   return {
     content: [
       {

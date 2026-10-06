@@ -56,8 +56,10 @@ export function registerServiceRequestCardinality(server: McpServer, client: DtC
       const limit = topN ?? 25;
       const flagThreshold = threshold ?? HIGH_CARDINALITY_THRESHOLD;
 
-      // Split builtin:service.requestCount.total by SERVICE_METHOD entity (each is a distinct request name).
-      const metricSelector = `builtin:service.requestCount.total:splitBy("dt.entity.service_method"):sort(value(auto,descending)):limit(${limit})`;
+      // Split builtin:service.requestCount.total by SERVICE_METHOD entity (each is a
+      // distinct request name). `:names` adds the human-readable
+      // dt.entity.service_method.name dimension next to the entity id.
+      const metricSelector = `builtin:service.requestCount.total:splitBy("dt.entity.service_method"):names:sort(value(auto,descending)):limit(${limit})`;
       const entitySelector = `type(SERVICE),entityId(${serviceId})`;
 
       const data = await client.get<MetricQueryResponse>("/api/v2/metrics/query", {
@@ -71,16 +73,19 @@ export function registerServiceRequestCardinality(server: McpServer, client: DtC
       });
 
       const series = data.result?.[0]?.data ?? [];
-      const top = series.map((s) => ({
-        requestId: s.dimensions?.[0],
-        requestName: s.dimensionMap
-          ? Object.values(s.dimensionMap)[0]
-          : s.dimensions?.[0],
-        callCount: (s.values ?? []).reduce(
-          (a, b) => (typeof b === "number" && !Number.isNaN(b) ? a + b : a),
-          0
-        ),
-      }));
+      const top = series.map((s) => {
+        const dm = s.dimensionMap ?? {};
+        const requestId = dm["dt.entity.service_method"] ?? s.dimensions?.[0];
+        const requestName = dm["dt.entity.service_method.name"] ?? requestId;
+        return {
+          requestId,
+          requestName,
+          callCount: (s.values ?? []).reduce(
+            (a, b) => (typeof b === "number" && !Number.isNaN(b) ? a + b : a),
+            0
+          ),
+        };
+      });
 
       // To get the TRUE distinct count we ideally need a separate query without the limit.
       // Workaround: query again with a high limit (e.g. 1000) and take the series count.

@@ -4,6 +4,7 @@ import { DtApiError, WriteNotEnabledError, type DtClient } from "../dt-client.js
 import type { AuditLog } from "../audit.js";
 import { checkBlastRadius } from "../helpers/blast-radius.js";
 import { refuse } from "../helpers/mutate-and-audit.js";
+import { invalidateTagGraphCache } from "../engine/tag-graph-fetcher.js";
 
 /**
  * Manual tag actions on entities. Distinct from auto-tag RULES (those live
@@ -126,6 +127,7 @@ export function registerAddTag(
           },
           responseBody: data,
         });
+        invalidateTagGraphCache(client);
         return {
           content: [
             {
@@ -276,6 +278,7 @@ export function registerRemoveTag(
           },
           responseBody: data,
         });
+        invalidateTagGraphCache(client);
         return {
           content: [
             {

@@ -116,7 +116,7 @@ function classifyProperties(properties: Record<string, unknown>): {
         rulable.push({
           path: `envVars.${k}`,
           value: v,
-          stability: k.startsWith("DT_") ? "stable" : "stable",
+          stability: "stable",
           rationale: k.startsWith("DT_")
             ? "DT_* env vars are first-class signals Dynatrace explicitly recognizes (DT_TAGS, DT_CLUSTER_ID, DT_NODE_ID)."
             : "Env vars are set at deploy time and persist for the process lifetime — strong signal.",

@@ -204,9 +204,10 @@ export class DtClient {
           dispatcher: this.dispatcher,
           signal: controller.signal,
         });
-        clearTimeout(timer);
-
+        // Keep the timer armed until the body is fully read: a 1000-entity
+        // page with +properties can take longer to stream than the headers.
         const text = await res.body.text();
+        clearTimeout(timer);
         const elapsedMs = Date.now() - reqStart;
 
         if (res.statusCode >= 200 && res.statusCode < 300) {
@@ -240,14 +241,19 @@ export class DtClient {
           lastErr = err;
           continue;
         }
-        this.log.warn("http non-retryable failure", {
-          verb,
-          path: pathOnly,
-          status: res.statusCode,
-          attempt,
-          elapsedMs,
-          bodyPreview: text.slice(0, 200),
-        });
+        this.log.warn(
+          RETRYABLE_STATUS.has(res.statusCode) && retryable
+            ? "http retries exhausted"
+            : "http non-retryable failure",
+          {
+            verb,
+            path: pathOnly,
+            status: res.statusCode,
+            attempt,
+            elapsedMs,
+            bodyPreview: text.slice(0, 200),
+          }
+        );
         throw err;
       } catch (err) {
         clearTimeout(timer);
@@ -389,6 +395,29 @@ export class DtClient {
     const url = this.buildUrl(this.baseFor("env"), path, opts.query);
     const encoded = encodeBody(body, opts.contentType);
     return this.exec<T>({ method: "PATCH", url, token, body: encoded, contentType: opts.contentType });
+  }
+
+  /**
+   * Introspect a token via POST /api/v2/apiTokens/lookup. The token being
+   * inspected goes in the BODY; `authToken` authenticates the call and needs
+   * the apiTokens.read scope. Goes through the shared executor so it gets the
+   * same timeout / retry / logging as everything else (retry is safe: the
+   * endpoint is read-only).
+   */
+  async lookupToken<T = unknown>(tokenToInspect: string, authToken: string): Promise<RequestResult<T>> {
+    const url = this.buildUrl(this.baseFor("env"), "/api/v2/apiTokens/lookup");
+    return this.exec<T>({
+      method: "POST",
+      url,
+      token: authToken,
+      body: JSON.stringify({ token: tokenToInspect }),
+      forceRetry: true,
+    });
+  }
+
+  /** The configured read / write tokens, for tools that need to introspect them. Never log these. */
+  get tokens(): { read: string; write: string | null; clusterConfigured: boolean } {
+    return { read: this.cfg.token, write: this.cfg.writeToken, clusterConfigured: Boolean(this.cfg.clusterToken) };
   }
 
   async close(): Promise<void> {

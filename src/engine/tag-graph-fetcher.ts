@@ -11,6 +11,44 @@
  * what we need.
  */
 import type { DtClient } from "../dt-client.js";
+import { makeLogger } from "../logger.js";
+
+const log = makeLogger("tag-graph");
+
+/**
+ * Process-local cache of the fetched graph.
+ *
+ * The AHR flow calls the three tag tools and the three naming audits back to
+ * back, and each one needs the same four paginated entity sweeps (hosts,
+ * PGs, PGIs, services with tags + properties + relationships). On a few
+ * thousand hosts that is tens of seconds and a lot of cluster load per call,
+ * repeated six times for data that does not change in between. The prompt
+ * also tells the agent the snapshot is reused across phases.
+ *
+ * TTL via DT_GRAPH_CACHE_TTL_MS (default 10 minutes; 0 disables). One entry
+ * per DtClient instance; the entries are the same objects for every caller,
+ * so callers must not mutate them.
+ */
+const DEFAULT_GRAPH_CACHE_TTL_MS = 10 * 60 * 1000;
+
+function graphCacheTtlMs(): number {
+  const raw = process.env.DT_GRAPH_CACHE_TTL_MS?.trim();
+  if (!raw) return DEFAULT_GRAPH_CACHE_TTL_MS;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_GRAPH_CACHE_TTL_MS;
+}
+
+interface GraphCacheEntry {
+  fetchedAt: number;
+  graph: TagGraphInput;
+}
+
+const graphCache = new WeakMap<DtClient, GraphCacheEntry>();
+
+/** Drop the cached graph for a client (tests, or after a write that changes tags). */
+export function invalidateTagGraphCache(client: DtClient): void {
+  graphCache.delete(client);
+}
 
 export interface TagGraphInput {
   hosts: GraphHost[];
@@ -144,8 +182,34 @@ function firstRelatedIdOfType(
   return undefined;
 }
 
-/** Main entry point — fetch + reshape. */
+/** Main entry point — fetch + reshape, served from the TTL cache when fresh. */
 export async function fetchTagGraph(client: DtClient): Promise<TagGraphInput> {
+  const ttl = graphCacheTtlMs();
+  const cached = graphCache.get(client);
+  if (cached && ttl > 0 && Date.now() - cached.fetchedAt < ttl) {
+    log.info("tag graph served from cache", {
+      ageMs: Date.now() - cached.fetchedAt,
+      ttlMs: ttl,
+      hosts: cached.graph.hosts.length,
+      services: cached.graph.services.length,
+    });
+    return cached.graph;
+  }
+  const started = Date.now();
+  const graph = await fetchTagGraphUncached(client);
+  log.info("tag graph fetched", {
+    elapsedMs: Date.now() - started,
+    hosts: graph.hosts.length,
+    processGroups: graph.processGroups.length,
+    processGroupInstances: graph.processGroupInstances.length,
+    services: graph.services.length,
+    cacheTtlMs: ttl,
+  });
+  if (ttl > 0) graphCache.set(client, { fetchedAt: Date.now(), graph });
+  return graph;
+}
+
+async function fetchTagGraphUncached(client: DtClient): Promise<TagGraphInput> {
   // 4 parallel pagination passes. The fields projection asks for tags +
   // properties + relationship data. Field syntax varies slightly across
   // Managed versions but `+tags,+properties,+fromRelationships,+toRelationships`

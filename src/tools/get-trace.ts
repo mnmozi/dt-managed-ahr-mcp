@@ -5,20 +5,20 @@ import { DtApiError, type DtClient } from "../dt-client.js";
 /**
  * dt_get_trace — POST /api/v2/spans/query (read-via-POST).
  *
- * Looks up spans by traceId (the typical case) or by an arbitrary span
- * selector. Returns the spans that match, sorted by startTime.
- *
- * If the endpoint isn't present on this Managed version (older clusters
- * exposed v1 PurePath endpoints under /api/v1/entity/services/...), the call
- * comes back as a 404 with the underlying error so the caller can fall
- * back to dt_raw_post / dt_raw_get against the v1 path.
+ * EXPERIMENTAL / PROBE. Span querying over REST is a Grail (SaaS) feature
+ * (`fetch spans` in DQL); the classic Managed environment API has no public
+ * spans-query endpoint, so on most Managed clusters this returns 404. The
+ * tool is kept as a cheap probe that reports `available:false` cleanly
+ * instead of failing the session. For PurePath-level questions on Managed,
+ * use the UI, or `dt_query_metrics` on `builtin:service.*` / request
+ * attributes.
  */
 export function registerGetTrace(server: McpServer, client: DtClient): void {
   server.registerTool(
     "dt_get_trace",
     {
       description:
-        "Look up spans for a trace (POST /api/v2/spans/query) — Managed's modern PurePath endpoint. Provide a traceId for the typical case, or a custom selector / advancedSelector for arbitrary queries. Read-only; uses the read token (token must have traces.lookup scope).",
+        "EXPERIMENTAL probe: look up spans for a trace via POST /api/v2/spans/query. Span querying over REST is a Grail/SaaS capability; most Dynatrace Managed clusters have no such endpoint and this returns available:false (404). Provide a traceId or a spanSelector. Read-only; uses the read token (traces.lookup).",
       inputSchema: {
         traceId: z
           .string()
@@ -107,7 +107,7 @@ export function registerGetTrace(server: McpServer, client: DtClient): void {
                     error: { status: err.status, body: err.body.slice(0, 500) },
                     note:
                       err.status === 404
-                        ? "Endpoint not present on this Managed version. Older clusters used /api/v1/entity/services/{id}/requests/... — fall back via dt_raw_get."
+                        ? "No spans-query endpoint on this environment (expected on Dynatrace Managed — span queries are Grail/SaaS only). Use dt_query_metrics on builtin:service.* metrics or the UI's distributed traces view instead."
                         : undefined,
                   },
                   null,

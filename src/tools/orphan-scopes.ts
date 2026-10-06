@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { DtClient } from "../dt-client.js";
+import { DtApiError, type DtClient } from "../dt-client.js";
 
 interface SettingsObject {
   objectId?: string;
@@ -46,8 +46,14 @@ const ENTITY_PREFIXES = [
   "SERVICE",
   "APPLICATION",
   "MOBILE_APPLICATION",
+  "CUSTOM_APPLICATION",
   "CUSTOM_DEVICE",
+  "CUSTOM_DEVICE_GROUP",
   "KUBERNETES_CLUSTER",
+  "CLOUD_APPLICATION",
+  "CLOUD_APPLICATION_NAMESPACE",
+  "AWS_CREDENTIALS",
+  "AZURE_CREDENTIALS",
 ];
 
 function isEntityScope(scope: string): boolean {
@@ -59,8 +65,12 @@ export function registerOrphanScopes(server: McpServer, client: DtClient): void 
     "dt_get_orphan_settings_scopes",
     {
       description:
-        "Find Settings 2.0 objects scoped to entity ids that no longer exist (decommissioned hosts, deleted MZs, churned k8s entities). Scans a curated set of high-signal schemas. For each suspected orphan, attempts a /api/v2/entities/{id} lookup and reports objects whose scope returns 404.",
+        "Find Settings 2.0 objects scoped to entity ids that no longer exist (decommissioned hosts, churned k8s entities, deleted apps). Scans a curated set of high-signal schemas. For each suspected orphan, looks the entity up via /api/v2/entities/{id} over a 30d window (configurable) and reports objects whose scope returns 404. Lookups that fail for any other reason (403, 429, timeout) are reported as 'unverified', never as orphans.",
       inputSchema: {
+        from: z
+          .string()
+          .optional()
+          .describe("Lookback for the entity existence check. Default 'now-30d' — an entity unseen for a month is a much safer 'gone' signal than the API's 3-day default."),
         maxLookups: z
           .number()
           .int()
@@ -70,8 +80,9 @@ export function registerOrphanScopes(server: McpServer, client: DtClient): void 
           .describe("Cap on entity-existence lookups to avoid blowing up on huge tenants. Default 500."),
       },
     },
-    async ({ maxLookups }) => {
+    async ({ from, maxLookups }) => {
       const cap = maxLookups ?? 500;
+      const lookback = from ?? "now-30d";
       const candidates: SettingsObject[] = [];
 
       // Pull settings objects across the curated schemas, collect entity-scoped ones.
@@ -102,24 +113,37 @@ export function registerOrphanScopes(server: McpServer, client: DtClient): void 
       const uniqueScopes = [...new Set(candidates.map((c) => c.scope!))].slice(0, cap);
       const orphanScopes = new Set<string>();
       const liveScopes = new Set<string>();
+      const unverified: Array<{ scope: string; error: string }> = [];
 
       for (const scope of uniqueScopes) {
         try {
-          await client.get<unknown>(`/api/v2/entities/${encodeURIComponent(scope)}`);
+          await client.get<unknown>(`/api/v2/entities/${encodeURIComponent(scope)}`, {
+            query: { from: lookback, to: "now" },
+          });
           liveScopes.add(scope);
-        } catch {
-          orphanScopes.add(scope);
+        } catch (err) {
+          if (err instanceof DtApiError && err.status === 404) {
+            orphanScopes.add(scope);
+          } else {
+            unverified.push({
+              scope,
+              error: err instanceof DtApiError ? `HTTP ${err.status}` : err instanceof Error ? err.message : String(err),
+            });
+          }
         }
       }
 
       const orphanObjects = candidates.filter((c) => orphanScopes.has(c.scope!));
       const summary = {
         scannedSchemas: SCHEMAS_TO_SCAN.length,
+        entityLookback: lookback,
         entityScopedObjectsFound: candidates.length,
         uniqueScopesChecked: uniqueScopes.length,
         liveScopeCount: liveScopes.size,
         orphanScopeCount: orphanScopes.size,
         orphanObjectsCount: orphanObjects.length,
+        unverifiedScopeCount: unverified.length,
+        unverifiedSample: unverified.slice(0, 20),
         truncated: candidates.length > cap,
         orphanObjectsSample: orphanObjects.slice(0, 50).map((o) => ({
           objectId: o.objectId,

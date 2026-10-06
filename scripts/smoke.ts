@@ -38,7 +38,7 @@ async function main(): Promise<void> {
       console.error(`[smoke] FAIL: HTTP ${err.status} on ${err.path}`);
       console.error(`[smoke] body: ${err.body.slice(0, 800)}`);
       if (err.status === 401) console.error("[smoke] hint: token invalid or not read correctly");
-      if (err.status === 403) console.error("[smoke] hint: token missing ReadConfig scope (or Settings read scope)");
+      if (err.status === 403) console.error("[smoke] hint: token missing settings.read scope (Settings 2.0 reads); Config API v1 tools additionally need ReadConfig");
       process.exit(1);
     }
     throw err;

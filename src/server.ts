@@ -13,6 +13,7 @@ import { registerWrites } from "./register/writes.js";
 import { registerSpecResources } from "./resources/specs.js";
 import { registerAhrPrompt } from "./prompts/ahr.js";
 import { makeLogger } from "./logger.js";
+import { stopEngine } from "./engine/engine-singleton.js";
 
 const lifecycleLog = makeLogger("lifecycle");
 
@@ -62,6 +63,7 @@ async function main(): Promise<void> {
   await server.connect(transport);
 
   const shutdown = async () => {
+    await stopEngine();
     await server.close();
     await client.close();
     process.exit(0);

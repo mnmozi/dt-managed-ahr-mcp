@@ -36,7 +36,13 @@ interface RawMethodEntity {
 }
 
 export async function fetchNamingGraph(client: DtClient): Promise<NamingGraphInput> {
-  const graph = await fetchTagGraph(client);
+  const base = await fetchTagGraph(client);
+  // fetchTagGraph may hand back a cached, shared object — never mutate it.
+  // Shallow-copy the service rows we are about to decorate with endpoints.
+  const graph: NamingGraphInput = {
+    ...base,
+    services: base.services.map((s) => ({ ...s })),
+  };
   await attachServiceEndpoints(client, graph);
   return graph;
 }

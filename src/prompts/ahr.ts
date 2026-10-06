@@ -8,12 +8,12 @@ function buildPromptText(accountAlias: string, expectedKeys: string): string {
     ? `\nExpected tag keys (OVERLAY only — use for gap analysis AFTER discovering the de-facto taxonomy, never as the baseline): ${expectedKeys}`
     : `\nNo expected tag keys provided. Discover the de-facto taxonomy from the data — do not assume any keys.`;
 
-  return `You are running an Account Health Review (AHR) for a Dynatrace Managed tenant using two MCP servers:
+  return `You are running an Account Health Review (AHR) for a Dynatrace Managed tenant using this MCP server (registered as \`dt-managed\`; every tool is prefixed \`dt_\`) and, optionally, the upstream \`dynatrace-managed-mcp\` (tools prefixed \`dynatrace_managed_\`):
 
-- \`dynatrace-managed-mcp\` (upstream) — entities, metrics, logs, events, problems, SLOs
-- \`dt-ahr\` (custom) — Settings 2.0: auto-tags, management zones, PG/service detection rules, request naming, entity tags, a raw_get escape hatch, and OpenAPI specs exposed as \`dt-spec://*\` resources
+- \`dt-managed\` (this server) — Settings 2.0 config reads (auto-tags, management zones, PG/service detection rules, request naming, …), entity tags + process properties, OneAgent/ActiveGate/token audits, the engine-backed tag + naming analyzers, OpenAPI specs as \`dt-spec://*\` resources, and — when DT_WRITE_TOKEN is set — the write tools (\`dt_validate_settings\`, \`dt_create_settings\`, \`dt_update_settings\`, \`dt_delete_settings\`, \`dt_add_tag\`, \`dt_apply_*\`, …). Read-only tools for live data also exist here (\`dt_search_entities\`, \`dt_query_metrics\`, \`dt_get_problem_history\`, \`dt_query_events\`, \`dt_search_logs\`).
+- \`dynatrace-managed-mcp\` (upstream, optional) — \`dynatrace_managed_discover_entities\`, \`dynatrace_managed_get_entity_details\`, \`dynatrace_managed_query_metrics_data\`, \`dynatrace_managed_list_problems\`, \`dynatrace_managed_list_slos\`, \`dynatrace_managed_get_slo_details\`, \`dynatrace_managed_get_environments_info\`. Wherever this prompt names an upstream tool, the \`dt_\` equivalent in parentheses works when upstream is not registered.
 
-Cluster URL, environment ID, and token are already configured in the MCP env. Do not ask for them and do not hardcode them.
+Cluster URL, environment ID, and tokens are already configured in the MCP env. Do not ask for them and do not hardcode them.
 
 === SESSION INPUTS ===
 
@@ -28,14 +28,16 @@ Phase discipline: work phase by phase. After each phase, print a short summary (
 
 Artifact discipline: for every tool call, save the raw JSON to \`${reportDir}/raw/<phase>-<tool>-<slug>.json\`. Write per-phase markdown to \`${reportDir}/phase-N.md\`. Maintain a running \`${reportDir}/report.md\` that accumulates findings.
 
-Error discipline: if a tool returns an error, record it in the phase file (schemaId / endpoint + status + message) and continue. Do not abort the phase for one missing schema.
+Error discipline: if a tool returns an error, record it in the phase file (schemaId / endpoint + status + message) and continue. Do not abort the phase for one missing schema. Match 403s against the \`scopeGaps\` block that \`dt_whoami\` returned in Phase 0 and say which scope is missing.
+
+Engine-fallback discipline: the engine-backed tools (\`dt_list_checks\`, \`dt_run_checks\`, \`dt_get_tag_snapshot\`, \`dt_extract_tag_signals\`, \`dt_simulate_tag_strategy\`, \`dt_audit_process_group_naming\`, \`dt_audit_host_naming\`, \`dt_audit_host_groups\`, \`dt_get_oneagent_versions\`, \`dt_get_activegate_versions\`, \`dt_get_api_tokens\`) need the \`dt-engine\` binary (DT_ENGINE_BIN). If one returns \`available: false\`: (1) record ENGINE UNAVAILABLE once in phase-0.md and report.md; (2) answer the same question with the non-engine tools (\`dt_list_tags_for_entity\`, \`dt_search_entities\` with \`fields='+tags,+properties'\`, \`dt_get_process_properties\`, \`dt_get_oneagent_module_status\`, \`dt_raw_get /api/v2/oneagents\`, \`dt_raw_get /api/v2/activeGates\`, \`dt_raw_get /api/v2/apiTokens?fields=+scopes,+lastUsedDate,+expirationDate\`); (3) label every finding produced that way "manual analysis — engine unavailable" and keep counts approximate; (4) NEVER call \`dt_apply_pg_naming_rule\` / \`dt_apply_host_clarifying_tag\` — their lattice validation needs engine reports, so naming remediation stays in manual-actions.md.
 
 Time-window discipline: all "live data" calls — entity discovery, tag listings, metric queries, request cardinality, problem listings — MUST use a 1-day window (from='now-24h', to='now') for Phase 1 (hosts) and Phase 4 (services). Phase 2 (PGs/PGIs) follows the same 1-day window since it sits between hosts and services. Exceptions:
 - \`dt_get_consumption_summary\` (Phase 5): use from='now-7d' AND from='now-30d' as planned for trend.
 - Settings 2.0 calls (rules, schemas) have no timeframe — they return current config regardless.
 - If a phase specifies a different window, follow it.
 
-Always pass the window explicitly on tools that accept \`from\`/\`to\` (\`dt_list_tags_for_entity\`, \`dt_get_service_request_cardinality\`, upstream \`query_metrics_data\`, upstream \`list_problems\` if filtering, etc.). Do not rely on default windows.
+Always pass the window explicitly on tools that accept \`from\`/\`to\` (\`dt_list_tags_for_entity\`, \`dt_get_service_request_cardinality\`, \`dt_query_metrics\` / upstream \`dynatrace_managed_query_metrics_data\`, \`dt_get_problem_history\` / upstream \`dynatrace_managed_list_problems\`, etc.). Do not rely on default windows.
 
 Naming-hygiene discipline (applies to Phase 1 hosts/host-groups and Phase 2 PGs): the engine-backed naming audits (\`dt_audit_process_group_naming\`, \`dt_audit_host_naming\`, \`dt_audit_host_groups\`) run BEFORE tag-strategy work in their phase. Name-based tag rules are unreliable when entities have generic names like \`ip-10-0-1-23\`, \`:80\`, or \`python3\` — fix the structure first, then layer tags on top. Compute order is bottom-up (PG audit → host audit → host-group audit) because host candidates pull from PG evidence; the report ORDER is top-down to match operator mental model. Every applied naming decision goes through a lattice (\`engine_high\` / \`ai_proposed\` / \`operator_confirmed\` / \`operator_override\`) enforced in code — you cannot upgrade a bucket or invent names not in the engine's candidate list. For \`no_signal\` entities, propose nothing; mark for manual review.
 
@@ -74,26 +76,27 @@ Common alternatives to consider (not all apply to every finding):
 
 Before proposing a rule, call dt_get_process_properties on a representative entity to see what stable signals exist (env vars, host group, k8s labels). Prefer fields with stability='stable' over 'fragile'. If nothing stable exists, the recommendation is often "set DT_TAGS on the process" rather than a fragile rule.
 
-Before constructing any payload for the write MCP, call dt_get_schema(schemaId) to see exact field names, types, and enum values for the rule you intend to create.
+Before constructing any payload for dt_validate_settings / dt_create_settings / dt_update_settings, call dt_get_schema(schemaId) to see exact field names, types, and enum values for the rule you intend to create.
 
 === PHASE 0 — Bootstrap ===
 
-1. \`dt-ahr\`: \`dt_whoami\` — record the cluster URL, env id, token name, scopes, and expiration. If the token lookup fails with 403, note it; later 403s on tools should be cross-referenced against the scope list (or its absence).
-2. Upstream: \`dynatrace_managed_get_environments_info\` and \`dynatrace_managed_check_config_errors\`. Confirm version ≥ 1.328.0 and no errors.
-3. \`dt-ahr\`: \`dt_list_schemas\`. Confirm these schemas exist and note any missing:
+1. \`dt_whoami\` — record the cluster URL, env id, whether write mode is enabled, and for BOTH the read token and the write token: name, scopes, expiration, last-used, plus the \`scopeGaps\` block. If a lookup shows introspected:false with 403, note it (the token lacks apiTokens.read); later 403s on tools are then matched against the scope guide instead.
+2. \`dt_list_checks\` — confirms the dt-engine subprocess starts and lists the deterministic checks. If it returns \`available: false\`, record ENGINE UNAVAILABLE and apply the engine-fallback discipline for the rest of the review.
+3. Upstream (if registered): \`dynatrace_managed_get_environments_info\` — record the cluster version. Without upstream, \`dt_raw_get\` with path \`/api/v1/config/clusterversion\` returns the same. Settings 2.0 schema ids differ across Managed versions; the \`dt_get_*\` schema wrappers probe several candidate ids and report per-schema availability, so a missing schema is a finding, not an error.
+4. \`dt_list_schemas\`. Confirm these schemas exist and note any missing:
    builtin:tags.auto-tagging, builtin:management-zones,
    builtin:process-group.advanced-detection-rule, builtin:process-group.detection-flags,
    builtin:service-detection.full-web-service, builtin:service-detection.full-web-request,
    builtin:service-detection.external-web-service, builtin:service-detection.external-web-request,
    builtin:service.request-naming, builtin:service.request-attributes,
    builtin:alerting.maintenance-window.
-4. Read the three \`dt-spec://\` resources (\`env-v2\`, \`env-config-v1\`, \`cluster-v1\` if accessible). Note cache paths.
-5. STOP and print Phase 0 summary including: who-am-i token scopes, cluster version, missing schemas (if any).
+5. Read the three \`dt-spec://\` resources (\`env-v2\`, \`env-config-v1\`, \`cluster-v1\` if accessible). Note cache paths.
+6. STOP and print Phase 0 summary including: read + write token scopes and gaps, engine availability, cluster version, missing schemas (if any).
 
 === PHASE 1 — Hosts & Host Groups ===
 
 Inventory:
-- Upstream \`dynatrace_managed_discover_entities\` for HOST_GROUP, then HOST. Use \`get_entity_details\` when richer fields are needed.
+- Upstream \`dynatrace_managed_discover_entities\` (or \`dt_search_entities\`) for HOST_GROUP, then HOST. Use \`dynatrace_managed_get_entity_details\` (or \`dt_get_process_properties\`, which also works for HOST ids) when richer fields are needed.
 - Per host, capture: name, OS, monitoring mode, host group, all tags (each with \`context\` + \`key\` + \`value\` + \`stringRepresentation\` + source when inferable), custom host metadata, management zones.
 
 Tag taxonomy — DERIVE IT, DO NOT ASSUME (engine-backed via the 3-round loop; see Tag-strategy discipline above):
@@ -148,7 +151,7 @@ Monitoring health (also Phase 1):
 Per-host module + technology coverage (mandatory):
 - \`dt_get_oneagent_module_status\` — produces these specific findings:
   - \`fullStackHostsWithoutLogs\` — every host in FULL_STACK monitoring mode where the log monitoring module is missing or disabled. List each host (name + entityId) and recommend either enabling the log module or downgrading the host to INFRASTRUCTURE if logs aren't intended on it.
-  - \`techGapHosts\` — every host where OneAgent detected a technology (Java, Node, .NET, etc.) that has no matching enabled module. List each host with the detected tech vs the enabled modules. Recommend: enable the tech-specific monitoring module, or document why this tech is intentionally excluded.
+  - \`techGapHosts\` — every FULL_STACK host whose HOST entity lists a deep-monitorable technology (Java, Node, .NET, PHP, Go, Python, Ruby, nginx, Apache, IIS) with no matching enabled module. List each host with the detected tech vs the enabled modules. Recommend: enable the tech-specific monitoring module, or document why this tech is intentionally excluded. If \`techGapAvailable\` is false, record the reason (usually entities.read missing) instead of reporting zero gaps.
   - \`misconfiguredHosts\` — modules flagged misconfigured by OneAgent itself.
 - \`dt_get_oneagent_features_and_enrichment\` — confirm metadata/context enrichment is enabled (otherwise env-var → tag flow recommended in remediations doesn't work) and that log-agent feature flags aren't disabling capture. If enrichment is off, EVERY auto-tag rule recommendation that keys on env vars must include "enable metadata enrichment first" as a prerequisite.
 
@@ -172,7 +175,7 @@ PG/PGI tag taxonomy — derive via the 3-round loop (same engine path as Phase 1
 - Round 2a — for ownership-style keys that are weaker on PG/PGI than on hosts, call \`dt_extract_tag_signals\` with the target key. The engine surfaces candidate values from PG/PGI properties (env vars are particularly strong on PGI: \`OWNING_TEAM\`, \`DT_TAGS\`, \`DEPLOYMENT_ENV\`). Cite the consensus pick in remediations.
 - Round 2b — if you're proposing a new PG-level extraction strategy, validate with \`dt_simulate_tag_strategy\` before writing it into the report.
 
-Cross-check via dt-ahr:
+Cross-check via the config reads:
 - \`dt_get_pg_detection_rules\` — for each rule: enabled, condition summary, estimated effect. Flag overbroad / dead / duplicate / mis-scoped.
 - \`dt_get_auto_tags\` rules targeting PG or PGI — flag rules that reference properties valid on PG but not PGI (or vice versa).
 - \`dt_get_naming_rules\` and \`dt_get_conditional_naming(type='processGroup')\` — list active PG naming rules. Flag generic-named PGs that have no rule covering them, and rules whose condition no longer matches anything (dead rules).
@@ -192,7 +195,7 @@ Output: \`${reportDir}/phase-2.md\` with sections — Inventory, PG Naming Hygie
 Inventory via \`dt_get_management_zones\` — count, naming, rule conditions.
 
 Checks:
-- Overlap: the same entities appearing in many MZs (use upstream \`discover_entities\` with \`mzName(...)\` selectors to count membership per MZ)
+- Overlap: the same entities appearing in many MZs (use \`dt_search_entities\` / upstream \`dynatrace_managed_discover_entities\` with \`mzName(...)\` in the entity selector to count membership per MZ)
 - Dead MZs: 0 entities
 - MZs whose matched entities don't semantically fit the MZ name
 - Rule hygiene: fragile refs to manual tags vs stable refs to host-group / auto-tag / env-tag
@@ -262,7 +265,7 @@ Output: \`${reportDir}/phase-3-7.md\`. Append to report. STOP.
 === PHASE 4 — Services ===
 
 Inventory:
-- Upstream \`dynatrace_managed_discover_entities\` for SERVICE — bucket by technology, MZ membership, owning PG.
+- Upstream \`dynatrace_managed_discover_entities\` (or \`dt_search_entities\` with \`fields='+tags,+managementZones,+properties,+fromRelationships'\`) for SERVICE — bucket by technology, MZ membership, owning PG.
 - For each SERVICE, capture name, technology, backing PG ids, MZ membership, tags (with context).
 
 De-facto SERVICE tag taxonomy — engine-backed via the 3-round loop (see Tag-strategy discipline). Same engine snapshot that Phase 1/2 used carries SERVICE rows too — you do NOT re-fetch:
@@ -282,21 +285,21 @@ Naming hygiene:
 - Generic SERVICE names (e.g. 'Web service on port 8080', exe-only, hostname-only).
 - \`dt_get_conditional_naming(type='service')\` and \`dt_get_naming_rules\` (Settings 2.0 service-naming candidates) — list active rules.
 - Cross-reference: which generic-named services have NO naming rule covering them?
-- For each, call upstream \`get_entity_details\` on a backing PGI then \`dt_get_process_properties\` to find a stable signal (env var, k8s label, host group) that could feed a service naming rule.
+- For each, call \`dt_get_process_properties\` on a backing PGI to find a stable signal (env var, k8s label, host group) that could feed a service naming rule.
 
 Request shaping (v1 + v2 coexist — audit both):
 
 V1 surface — OneAgent-detected services (Java / .NET / Node / PHP / Go deeply instrumented by OneAgent):
 - \`dt_get_service_detection_rules\` — v1 rules across full-web-service, full-web-request, external-web-service, external-web-request schemas.
 - \`dt_get_request_naming\` — v1 request-naming + request-attributes.
-- For the top 10–20 services by traffic (use upstream \`query_metrics_data\` with \`builtin:service.requestCount.total\` to rank), call \`dt_get_service_request_cardinality(serviceId)\` — services with isHighCardinality=true are the strongest candidates for new request-naming rules.
+- For the top 10–20 services by traffic (use \`dt_query_metrics\` with \`builtin:service.requestCount.total:splitBy("dt.entity.service"):sort(value(auto,descending)):limit(20)\` to rank), call \`dt_get_service_request_cardinality(serviceId)\` — services with isHighCardinality=true are the strongest candidates for new request-naming rules.
 
 V2 surface — k8s-discovered services + OTel-instrumented services (these don't go through OneAgent's full-web-request pipeline):
 - \`dt_get_v2_service_detection\` — covers builtin:service-detection-rules, builtin:service-splitting-rules, builtin:endpoint-detection-rules, builtin:url-path-pattern-matching-rules, builtin:unified-services-endpoint-metrics, builtin:apis.detection-rules.
 - The "URL path pattern matching" tab is the v2 equivalent of v1 request-naming for k8s/OTel services. Audit the same way: dead patterns (no matches), too-broad, too-narrow, missing patterns for high-cardinality services.
 
 Coexistence audit (mandatory — common misconfiguration source):
-- For each finding about a service, identify whether the service is OneAgent-detected (v1) or k8s/OTel-detected (v2). Use upstream \`get_entity_details\` on the service: properties.agentTechnologyType, presence of k8s metadata, presence of OTel resource attributes.
+- For each finding about a service, identify whether the service is OneAgent-detected (v1) or k8s/OTel-detected (v2). Use upstream \`dynatrace_managed_get_entity_details\` (or \`dt_get_process_properties\` with rawOnly=true) on the service: properties.agentTechnologyType, presence of k8s metadata, presence of OTel resource attributes.
 - Flag rules in the wrong tab: a v1 rule scoped to a v2-detected service will not fire (and vice versa). The fix is to recreate the rule on the correct surface.
 - Flag the same logical concern handled twice (e.g. a v1 request-naming rule AND a v2 url-path-pattern rule both trying to normalize \`/users/{id}\`) — pick one source of truth.
 
@@ -324,7 +327,7 @@ Calculated service metrics:
 SLO hygiene (use upstream MCP):
 - \`dynatrace_managed_list_slos\` — inventory.
 - For each: \`dynatrace_managed_get_slo_details\` — current vs target, error budget remaining, days to breach at current burn rate.
-- Flag dead SLOs (never evaluated, target unreachable like 99.999% on a flaky service, scope matches 0 services), SLOs not attached to an alerting profile (silent), and coverage gaps (SERVICEs with frequent problems but no SLO — cross-reference upstream \`list_problems\` filtered to type SERVICE).
+- Flag dead SLOs (never evaluated, target unreachable like 99.999% on a flaky service, scope matches 0 services), SLOs not attached to an alerting profile (silent), and coverage gaps (SERVICEs with frequent problems but no SLO — cross-reference \`dt_get_problem_history\` top recurring root entities / upstream \`dynatrace_managed_list_problems\` filtered to type SERVICE). Without upstream, \`dt_get_slo\` reads one SLO and \`dt_raw_get /api/v2/slo\` lists them.
 
 Anomaly detection on services:
 - \`dt_get_service_anomaly_detection\` — global config plus per-service overrides. Flag: services with disabled AD, services with hyper-sensitive thresholds (likely noise sources), services with no overrides where one would help (high-traffic, high-error-variance services).
@@ -436,12 +439,12 @@ Output: \`${reportDir}/phase-4-8.md\` with sections — Inventory, Tag Taxonomy,
 
 === PHASE 5 — Consumption / Cost ===
 
-\`dt_get_consumption_summary\` with from='now-7d' (also re-run with from='now-30d' for comparison).
+\`dt_get_consumption_summary\` with from='now-7d' (also re-run with from='now-30d' for comparison). It discovers the billing metrics this tenant exposes (\`builtin:billing.*\`) and groups them into categories; read \`categoryTotals\` for the ranking and \`byCategory\` for the metric keys behind each category.
 
 Checks:
-- Which category dominates (host units vs DDU-metrics vs DDU-logs vs DDU-traces vs synthetic vs sessions)
+- Which category dominates (host units vs DDU-metrics vs DDU-logs vs DDU-traces vs synthetic vs sessions) — from \`categoryTotals\`
 - Categories that look disproportionate vs the apparent size of the deployment (lots of DDU-logs but few hosts → noisy log ingest; lots of DDU-metrics but few custom metrics defined → metric explosion from a custom integration)
-- Any category that returned 'available: false' — note for the user (license tier may not include it, or selector changed in this DT version)
+- Any category with no discovered metric, or metrics with 'available: false' — note for the user (license tier may not include it, or the key moved in this DT version)
 
 Configuration cross-checks (cost-driver evidence, mandatory):
 - \`dt_get_process_monitoring_rules\` — list rules. Flag overbroad rules (no condition, applies to all hosts/PGs), redundant rules, and processes monitored that have 0 traffic over the window (waste). Tie to high host-unit / DDU-metrics totals.
@@ -489,7 +492,7 @@ Two artifacts:
    - **Cross-entity propagation rules** — explicit rules for how a key flows between layers. Example: "\`team\` is set as DT_TAGS env var on the PGI; auto-tag rule \`team-from-pgi\` propagates it to the SERVICE; host inherits via host group naming convention."
    - **Anti-patterns to avoid** — short list, derived from what went wrong in the current state (e.g. "no manual \`team\` tags — they always drift to inconsistent casings").
 
-2) \`${reportDir}/tagging-strategy.json\` — machine-readable form of the same. Each canonical key as an object, plus arrays for retirement, normalization, waves, propagation rules. This is the input the write MCP uses (alongside the remediation-backlog.json) to actually implement the strategy.
+2) \`${reportDir}/tagging-strategy.json\` — machine-readable form of the same. Each canonical key as an object, plus arrays for retirement, normalization, waves, propagation rules. This is the input the write tools use (alongside the remediation-backlog.json) to actually implement the strategy.
 
 Discipline:
 - The proposed strategy must be CONSISTENT with the remediation-backlog.json — if a backlog entry creates an auto-tag rule for \`team\`, the strategy must list \`team\` as a canonical key with mechanism="auto-tag rule" and reference the REM-NNN id.
@@ -559,7 +562,7 @@ Two artifacts:
    - **v1 vs v2 surface decision** per recommendation. For each service that needs a request rule, classify the service:
      - OneAgent-detected (Java/.NET/Node/PHP/Go deep instrumentation) → v1
      - k8s-discovered / OTel-instrumented → v2
-     - Use upstream \`get_entity_details\` on the service to determine.
+     - Use upstream \`dynatrace_managed_get_entity_details\` (or \`dt_get_process_properties\` with rawOnly=true) on the service to determine.
    - **Inbound rules table** (rule_type one of full-web-request-split / -merge / -rename / -ignore, OR v2 url-path-pattern-add / -modify / -delete). Per row:
      - service id + name
      - surface (v1 | v2)
@@ -578,7 +581,7 @@ Two artifacts:
    - **Coexistence findings** — every misplaced rule (v1 rule on a v2 service, duplicate rule on both surfaces). Each gets a remediation entry: delete from wrong surface, recreate on correct surface.
    - **URL path matcher choice rationale** — for each proposed pattern, one-line justification of why the chosen matcher type (e.g. "BEGINS_WITH because path is anchored at API root and we don't need capture groups").
 
-2) \`${reportDir}/request-rules-strategy.json\` — machine-readable form. Each rule entry as an object with the columns above plus a payload field shaped against the actual schema (fetched via dt_get_schema). Entries must be schema-compatible so the write MCP can use them as \`dt_create_settings\` payloads.
+2) \`${reportDir}/request-rules-strategy.json\` — machine-readable form. Each rule entry as an object with the columns above plus a payload field shaped against the actual schema (fetched via dt_get_schema). Entries must be schema-compatible so they can be used directly as \`dt_create_settings\` payloads.
 
 Discipline:
 - Every entry references the schemaId it targets. v1 entries use the \`builtin:service-detection.*\` ids; v2 entries use \`builtin:service-detection-rules\` / \`builtin:url-path-pattern-matching-rules\` / \`builtin:service-splitting-rules\` / \`builtin:endpoint-detection-rules\` as appropriate.
@@ -602,7 +605,7 @@ Two artifacts:
      - per-feature evidence cite (raw artifact + objectId)
      - backlog REM ids
    - **Capture-rate plan** — for each app with high capture × high traffic, propose a sampling rate. Justify with observed sessionCount and target cost reduction.
-   - **Apdex tuning plan** — for each app where apdex is using defaults, derive proposed thresholds from observed \`builtin:apps.web.userActionDuration.load\` p50/p95 (use upstream metrics query). Cite the percentile values.
+   - **Apdex tuning plan** — for each app where apdex is using defaults, derive proposed thresholds from observed \`builtin:apps.web.userActionDuration.load\` p50/p95 (use \`dt_query_metrics\`; confirm the key with \`dt_list_metrics(metricSelector='builtin:apps.web.*')\` first). Cite the percentile values.
    - **User-action naming plan** — for top apps by user-action cardinality, propose naming rules with the URL path matcher choice (per the matcher decision rules).
    - **KUA selection plan** — for each app with no KUAs, recommend up to 3 candidate KUAs from the top user actions by traffic. Justify the selection.
    - **Session Replay decision matrix** — per app: enable / disable / mask-more / keep-as-is. Driven by traffic, license, and presence of privacy preferences.
@@ -610,11 +613,11 @@ Two artifacts:
    - **Synthetic linkage plan** — high-traffic apps without an assigned synthetic monitor → recommend adding one; synthetic monitors assigned to dead apps → recommend removal.
    - **Implementation waves** — match the other strategies' wave concept. Wave 0 if any change requires metadata-enrichment to be on first.
 
-2) \`${reportDir}/rum-strategy.json\` — machine-readable form. Each per-app entry is shaped so the write MCP can consume it directly: each \`feature_to_enable\` becomes a \`dt_create_settings\` payload referencing the right RUM schema with scope = applicationId.
+2) \`${reportDir}/rum-strategy.json\` — machine-readable form. Each per-app entry is shaped so the write tools can consume it directly: each \`feature_to_enable\` becomes a \`dt_create_settings\` payload referencing the right RUM schema with scope = applicationId.
 
 Discipline:
 - Every per-app feature recommendation must reference the matrix entry that justified it (\`evidence: { tool: 'dt_get_rum_app_feature_matrix', appId, feature, status }\`).
-- Every payload field shaped against \`dt_get_schema(schemaId)\` before going to the write MCP.
+- Every payload field shaped against \`dt_get_schema(schemaId)\` before any dt_create_settings call.
 - Privacy gaps (Session Replay or User Tagging without privacy preferences) are HIGH severity by default — agent cannot downgrade without explicit human override note.
 - Don't recommend enabling features the cluster doesn't license — if a feature returned only "n/a" or "missing" with no env-default and no per-app override across all apps, it may not be in the license. Note that and skip rather than recommend.
 
@@ -637,7 +640,7 @@ Two artifacts:
    - **Inheritance / propagation strategy** — when a key should be set on a parent entity and inherited (host group → host → PG → PGI → service), spell out the chain explicitly.
    - **Implementation waves** — match the tagging strategy waves so the rules ship in lockstep with the tag keys they produce.
 
-2) \`${reportDir}/auto-tag-strategy.json\` — array of rule definitions, grouped by entity type. Schema-compatible with builtin:tags.auto-tagging so the write MCP can use entries directly as the \`value\` field of dt_create_settings calls.
+2) \`${reportDir}/auto-tag-strategy.json\` — array of rule definitions, grouped by entity type. Schema-compatible with builtin:tags.auto-tagging so entries can be used directly as the \`value\` field of dt_create_settings calls.
 
 Discipline:
 - Every rule must produce a key that's in the canonical key set from the tagging strategy. If a current rule produces a key not in the canonical set, the strategy says "delete this rule" (with REM entry).
@@ -645,9 +648,9 @@ Discipline:
 - Per (key, entity-type), there must be exactly ONE rule in the strategy. If two rules both produce \`team\` on PGI, consolidate.
 - The auto-tag strategy, the PG detection strategy, the service naming strategy, the tagging strategy, and the remediation backlog must all reference each other consistently — no orphan recommendations across artifacts.
 
-=== WRITE-MCP HANDOFF (mandatory, last step) ===
+=== WRITE HANDOFF (mandatory, last step) ===
 
-Produce a machine-actionable backlog the dt-managed-write-mcp can consume directly. Two artifacts:
+Produce a machine-actionable backlog that the write tools of this server (\`dt_validate_settings\` → \`dt_create_settings\` / \`dt_update_settings\`, registered only when DT_WRITE_TOKEN is set) can consume directly. Two artifacts:
 
 1) \`${reportDir}/remediation-backlog.json\` — array of remediation entries. Each entry MUST be self-contained:
 \`\`\`json
@@ -709,7 +712,7 @@ Discipline:
 - Always set \`dryRunFirst: true\` unless the change is a trivial label tweak.
 - Do NOT include free-text "user must do this in UI" entries here. Anything not API-actionable goes into a separate \`${reportDir}/manual-actions.md\`.
 
-2) \`${reportDir}/apply.sh\` — a runnable shell script that the write MCP operator can use as a checklist. Each line is a comment + the tool call template, in priority order. Example shape:
+2) \`${reportDir}/apply.sh\` — a runnable shell script that the operator can use as a checklist. Each line is a comment + the tool call template, in priority order. Example shape:
 \`\`\`bash
 #!/usr/bin/env bash
 # REM-001 (High) — Add ownership auto-tag rule for team Foo
@@ -721,7 +724,7 @@ Discipline:
 #    Use MCP tool dt_get_auto_tags filtered by the new objectId
 \`\`\`
 
-This is intentionally not auto-executable — humans must drive the write MCP. The script is the runbook, the JSON is the payload source of truth.
+This is intentionally not auto-executable — humans must drive the write tools. The script is the runbook, the JSON is the payload source of truth.
 
 Also produce \`${reportDir}/manual-actions.md\` for items the API can't fix (UI-only settings, things requiring deploy access, things needing a different token scope), so the JSON backlog stays purely API-actionable.
 

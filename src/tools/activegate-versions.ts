@@ -1,11 +1,12 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { DtApiError, type DtClient } from "../dt-client.js";
+import type { DtClient } from "../dt-client.js";
 import { getEngine } from "../engine/engine-singleton.js";
 import {
   analyzeActiveGateDistribution,
   type ActiveGateRaw,
 } from "../engine/analyzers/activegate-distribution.js";
+import { fetchLatestInstallerVersions } from "../helpers/installer-versions.js";
 
 /**
  * dt_get_activegate_versions — audit ActiveGate fleet health + capability map.
@@ -21,51 +22,13 @@ interface ActiveGateListResponse {
   activeGates?: ActiveGateRaw[];
 }
 
-async function fetchLatestVersionsByOs(
-  client: DtClient,
-  osTypes: Set<string>
-): Promise<{ map: Record<string, string>; errors: Array<{ osType: string; error: string }> }> {
-  const map: Record<string, string> = {};
-  const errors: Array<{ osType: string; error: string }> = [];
-  for (const osType of osTypes) {
-    if (osType === "UNKNOWN" || osType === "") continue;
-    const osLower = osType.toLowerCase();
-    try {
-      const resp = await client.get<{ latestGatewayVersion?: string; latestAgentVersion?: string }>(
-        `/api/v1/deployment/installer/gateway/${encodeURIComponent(osLower)}/default/latest/metainfo`
-      );
-      const v = resp?.latestGatewayVersion ?? resp?.latestAgentVersion;
-      if (v) {
-        map[osType] = v;
-        continue;
-      }
-    } catch {
-      // fall through
-    }
-    try {
-      const resp = await client.get<{ availableVersions?: string[] }>(
-        `/api/v1/deployment/installer/gateway/versions/${encodeURIComponent(osLower)}`
-      );
-      const versions = resp?.availableVersions ?? [];
-      if (versions.length > 0) {
-        const last = versions[versions.length - 1];
-        if (typeof last === "string") {
-          map[osType] = last;
-          continue;
-        }
-      }
-    } catch (err) {
-      const msg =
-        err instanceof DtApiError
-          ? `HTTP ${err.status}`
-          : err instanceof Error
-            ? err.message
-            : String(err);
-      errors.push({ osType, error: msg });
-    }
-  }
-  return { map, errors };
-}
+/*
+ * Per-OS "latest available" lookup is shared with the OneAgent tool
+ * (helpers/installer-versions.ts): LINUX → unix mapping, then
+ * /api/v1/deployment/installer/gateway/{osType}/latest/metainfo with a
+ * fallback to /api/v1/deployment/installer/gateway/versions/{osType}.
+ * ActiveGate installers only exist for windows + unix.
+ */
 
 export function registerActiveGateVersions(server: McpServer, client: DtClient): void {
   server.registerTool(
@@ -82,7 +45,7 @@ export function registerActiveGateVersions(server: McpServer, client: DtClient):
           .boolean()
           .optional()
           .describe(
-            "If true, skip the per-OS latest-version lookup. AGs land in `activeGatesWithoutOsLatestReference`. Useful if the deployment installer endpoint is unavailable or token lacks scope."
+            "If true, skip the per-OS latest-version lookup (Deployment API, needs the InstallerDownload scope). AGs land in `activeGatesWithoutOsLatestReference`."
           ),
         osTypeOverrides: z
           .record(z.string(), z.string())
@@ -119,7 +82,7 @@ export function registerActiveGateVersions(server: McpServer, client: DtClient):
       let latestVersionsByOs: Record<string, string> = {};
       let latestLookupErrors: Array<{ osType: string; error: string }> = [];
       if (!skipLatestLookup) {
-        const { map, errors } = await fetchLatestVersionsByOs(client, observedOs);
+        const { map, errors } = await fetchLatestInstallerVersions(client, observedOs, "gateway");
         latestVersionsByOs = map;
         latestLookupErrors = errors;
       }
