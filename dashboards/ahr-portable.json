@@ -1,0 +1,84 @@
+{
+  "dashboardMetadata": {
+    "name": "AHR — Account Health Review (Managed)",
+    "owner": "admin",
+    "shared": true,
+    "dashboardFilter": { "timeframe": "-7d" }
+  },
+  "tiles": [
+    {
+      "name": "Monitored hosts", "tileType": "DATA_EXPLORER", "configured": true,
+      "bounds": { "top": 0, "left": 0, "width": 304, "height": 304 }, "tileFilter": {},
+      "customName": "Monitored hosts (count)",
+      "queries": [{ "id": "A", "metricSelector": "builtin:host.availability:splitBy():count", "enabled": true }],
+      "visualConfig": { "type": "SINGLE_VALUE", "global": {}, "rules": [{ "matcher": "A:", "properties": { "color": "DEFAULT" }, "seriesOverrides": [] }], "axes": { "xAxis": { "visible": true }, "yAxes": [] }, "heatmapSettings": {}, "singleValueSettings": { "showTrend": true, "showSparkLine": true, "linkTileColorToThreshold": true }, "thresholds": [], "tableSettings": { "isThresholdBackgroundAppliedToCell": false }, "graphChartSettings": { "connectNulls": false }, "honeycombSettings": {} }
+    },
+    {
+      "name": "Host count over time", "tileType": "DATA_EXPLORER", "configured": true,
+      "bounds": { "top": 0, "left": 304, "width": 456, "height": 304 }, "tileFilter": {},
+      "customName": "Host count over time (dip = agent stopped reporting)",
+      "queries": [{ "id": "A", "metricSelector": "builtin:host.availability:splitBy():count", "enabled": true }],
+      "visualConfig": { "type": "GRAPH_CHART", "global": {}, "rules": [{ "matcher": "A:", "properties": { "color": "DEFAULT" }, "seriesOverrides": [] }], "axes": { "xAxis": { "visible": true }, "yAxes": [] }, "heatmapSettings": {}, "thresholds": [], "tableSettings": { "isThresholdBackgroundAppliedToCell": false }, "graphChartSettings": { "connectNulls": false }, "honeycombSettings": {} }
+    },
+    {
+      "name": "Host availability", "tileType": "DATA_EXPLORER", "configured": true,
+      "bounds": { "top": 0, "left": 760, "width": 456, "height": 304 }, "tileFilter": {},
+      "customName": "Availability % per host (worst first)",
+      "queries": [{ "id": "A", "metric": "builtin:host.availability", "spaceAggregation": "AVG", "timeAggregation": "DEFAULT", "splitBy": ["dt.entity.host"], "sortBy": "ASC", "limit": 20, "enabled": true }],
+      "visualConfig": { "type": "GRAPH_CHART", "global": {}, "rules": [{ "matcher": "A:", "properties": { "color": "DEFAULT" }, "seriesOverrides": [] }], "axes": { "xAxis": { "visible": true }, "yAxes": [] }, "heatmapSettings": {}, "thresholds": [], "tableSettings": { "isThresholdBackgroundAppliedToCell": false }, "graphChartSettings": { "connectNulls": false }, "honeycombSettings": {} }
+    },
+    {
+      "name": "Open problems", "tileType": "OPEN_PROBLEMS", "configured": true,
+      "bounds": { "top": 304, "left": 0, "width": 304, "height": 304 }, "tileFilter": {}
+    },
+    {
+      "name": "Top hosts by CPU", "tileType": "DATA_EXPLORER", "configured": true,
+      "bounds": { "top": 304, "left": 304, "width": 456, "height": 304 }, "tileFilter": {},
+      "customName": "Top hosts — CPU usage (%)",
+      "queries": [{ "id": "A", "metric": "builtin:host.cpu.usage", "spaceAggregation": "AVG", "timeAggregation": "DEFAULT", "splitBy": ["dt.entity.host"], "sortBy": "DESC", "limit": 10, "enabled": true }],
+      "visualConfig": { "type": "GRAPH_CHART", "global": {}, "rules": [{ "matcher": "A:", "properties": { "color": "DEFAULT" }, "seriesOverrides": [] }], "axes": { "xAxis": { "visible": true }, "yAxes": [] }, "heatmapSettings": {}, "thresholds": [], "tableSettings": { "isThresholdBackgroundAppliedToCell": false }, "graphChartSettings": { "connectNulls": false }, "honeycombSettings": {} }
+    },
+    {
+      "name": "Top hosts by memory", "tileType": "DATA_EXPLORER", "configured": true,
+      "bounds": { "top": 304, "left": 760, "width": 456, "height": 304 }, "tileFilter": {},
+      "customName": "Top hosts — Memory usage (%)",
+      "queries": [{ "id": "A", "metric": "builtin:host.mem.usage", "spaceAggregation": "AVG", "timeAggregation": "DEFAULT", "splitBy": ["dt.entity.host"], "sortBy": "DESC", "limit": 10, "enabled": true }],
+      "visualConfig": { "type": "GRAPH_CHART", "global": {}, "rules": [{ "matcher": "A:", "properties": { "color": "DEFAULT" }, "seriesOverrides": [] }], "axes": { "xAxis": { "visible": true }, "yAxes": [] }, "heatmapSettings": {}, "thresholds": [], "tableSettings": { "isThresholdBackgroundAppliedToCell": false }, "graphChartSettings": { "connectNulls": false }, "honeycombSettings": {} }
+    },
+    {
+      "name": "Service response time", "tileType": "DATA_EXPLORER", "configured": true,
+      "bounds": { "top": 608, "left": 0, "width": 380, "height": 304 }, "tileFilter": {},
+      "customName": "Slowest services — median response time",
+      "queries": [{ "id": "A", "metric": "builtin:service.response.time", "spaceAggregation": "MEDIAN", "timeAggregation": "DEFAULT", "splitBy": ["dt.entity.service"], "sortBy": "DESC", "limit": 10, "enabled": true }],
+      "visualConfig": { "type": "GRAPH_CHART", "global": {}, "rules": [{ "matcher": "A:", "properties": { "color": "DEFAULT" }, "seriesOverrides": [] }], "axes": { "xAxis": { "visible": true }, "yAxes": [] }, "heatmapSettings": {}, "thresholds": [], "tableSettings": { "isThresholdBackgroundAppliedToCell": false }, "graphChartSettings": { "connectNulls": false }, "honeycombSettings": {} }
+    },
+    {
+      "name": "Service failure rate", "tileType": "DATA_EXPLORER", "configured": true,
+      "bounds": { "top": 608, "left": 380, "width": 380, "height": 304 }, "tileFilter": {},
+      "customName": "Services — failure rate (%)",
+      "queries": [{ "id": "A", "metric": "builtin:service.errors.total.rate", "spaceAggregation": "AVG", "timeAggregation": "DEFAULT", "splitBy": ["dt.entity.service"], "sortBy": "DESC", "limit": 10, "enabled": true }],
+      "visualConfig": { "type": "GRAPH_CHART", "global": {}, "rules": [{ "matcher": "A:", "properties": { "color": "DEFAULT" }, "seriesOverrides": [] }], "axes": { "xAxis": { "visible": true }, "yAxes": [] }, "heatmapSettings": {}, "thresholds": [], "tableSettings": { "isThresholdBackgroundAppliedToCell": false }, "graphChartSettings": { "connectNulls": false }, "honeycombSettings": {} }
+    },
+    {
+      "name": "Service throughput", "tileType": "DATA_EXPLORER", "configured": true,
+      "bounds": { "top": 608, "left": 760, "width": 456, "height": 304 }, "tileFilter": {},
+      "customName": "Services — request count",
+      "queries": [{ "id": "A", "metric": "builtin:service.requestCount.total", "spaceAggregation": "SUM", "timeAggregation": "DEFAULT", "splitBy": ["dt.entity.service"], "sortBy": "DESC", "limit": 10, "enabled": true }],
+      "visualConfig": { "type": "GRAPH_CHART", "global": {}, "rules": [{ "matcher": "A:", "properties": { "color": "DEFAULT" }, "seriesOverrides": [] }], "axes": { "xAxis": { "visible": true }, "yAxes": [] }, "heatmapSettings": {}, "thresholds": [], "tableSettings": { "isThresholdBackgroundAppliedToCell": false }, "graphChartSettings": { "connectNulls": false }, "honeycombSettings": {} }
+    },
+    {
+      "name": "Host units per host", "tileType": "DATA_EXPLORER", "configured": true,
+      "bounds": { "top": 912, "left": 0, "width": 608, "height": 304 }, "tileFilter": {},
+      "customName": "Consumption — full-stack host units per host",
+      "queries": [{ "id": "A", "metric": "builtin:billing.full_stack_monitoring.usage_per_host", "spaceAggregation": "SUM", "timeAggregation": "DEFAULT", "splitBy": ["dt.entity.host"], "sortBy": "DESC", "limit": 20, "enabled": true }],
+      "visualConfig": { "type": "GRAPH_CHART", "global": {}, "rules": [{ "matcher": "A:", "properties": { "color": "DEFAULT" }, "seriesOverrides": [] }], "axes": { "xAxis": { "visible": true }, "yAxes": [] }, "heatmapSettings": {}, "thresholds": [], "tableSettings": { "isThresholdBackgroundAppliedToCell": false }, "graphChartSettings": { "connectNulls": false }, "honeycombSettings": {} }
+    },
+    {
+      "name": "Fullest disks", "tileType": "DATA_EXPLORER", "configured": true,
+      "bounds": { "top": 912, "left": 608, "width": 608, "height": 304 }, "tileFilter": {},
+      "customName": "Capacity — fullest disks (%)",
+      "queries": [{ "id": "A", "metric": "builtin:host.disk.usedPct", "spaceAggregation": "AVG", "timeAggregation": "DEFAULT", "splitBy": ["dt.entity.host", "dt.entity.disk"], "sortBy": "DESC", "limit": 10, "enabled": true }],
+      "visualConfig": { "type": "GRAPH_CHART", "global": {}, "rules": [{ "matcher": "A:", "properties": { "color": "DEFAULT" }, "seriesOverrides": [] }], "axes": { "xAxis": { "visible": true }, "yAxes": [] }, "heatmapSettings": {}, "thresholds": [], "tableSettings": { "isThresholdBackgroundAppliedToCell": false }, "graphChartSettings": { "connectNulls": false }, "honeycombSettings": {} }
+    }
+  ]
+}

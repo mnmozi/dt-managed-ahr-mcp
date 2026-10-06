@@ -9,6 +9,7 @@ import { registerCoreReads } from "./register/reads-core.js";
 import { registerInfraReads } from "./register/reads-infra.js";
 import { registerObservabilityReads } from "./register/reads-observability.js";
 import { registerSchemaWrappers } from "./register/reads-schema-wrappers.js";
+import { registerClusterReadTools } from "./register/reads-cluster.js";
 import { registerWrites } from "./register/writes.js";
 import { registerSpecResources } from "./resources/specs.js";
 import { registerAhrPrompt } from "./prompts/ahr.js";
@@ -39,6 +40,7 @@ async function main(): Promise<void> {
   registerInfraReads(server, client);
   registerObservabilityReads(server, client);
   registerSchemaWrappers(server, client);
+  registerClusterReadTools(server, client);
 
   // ---------- write surface (gated on DT_WRITE_TOKEN) ----------
   if (client.writeEnabled) {

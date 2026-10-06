@@ -49,6 +49,99 @@ with the commit/date when closed.
 
 ## Resolved
 
+- **Settings validation lost per-item errors on a 4xx** (2026-10-06, live
+  1.350.7). validateOnly answers 200 (all valid), 207 (mixed) or the
+  items' own 4xx when EVERY item fails — with the per-item array still in
+  the body. The pre-check treated any 4xx as a batch failure (`<batch>`,
+  body cut at 500 chars), so the common single-object create lost its
+  constraint violations; dt_validate_settings returned `validated: true`
+  for a 207 mixed batch. Both now share `validateSettingsBatch` (parses
+  the array from 2xx and 4xx bodies; only a non-array body is a batch
+  error) and report `invalidItems[]` by index with a `hint` for the opaque
+  messages (SaaS-only schema, non-DPS license, unadvertised id, scope
+  class not allowed, unknown property). Name-collision map gained
+  `builtin:event-correlation-rules` (displayName). Not changed:
+  dt_update_settings still PUTs without a pre-check (dryRun is opt-in)
+  and returns raw errors.
+
+- **Cluster upgrade 1.346.69 → 1.350.7** (2026-10-06). Schema inventory
+  227 → 233: 6 added, 0 removed, 29 version bumps (all patch/minor; none
+  touch a hardcoded write payload — writes go through dt_create_settings /
+  dt_validate_settings). No wrapper went dark. New schemas wired in:
+  `event-correlation-rules` + `platform-event-correlation` →
+  dt_get_alerting_profiles; `metric.limits-alerts` +
+  `billing.container-application-monitoring.optin` → dt_get_cost_controls;
+  `logmonitoring.log-agent-cpu-quota` → dt_get_log_ingestion_rules.
+  `synthetic.monaco-external-id` left to the P2 backlog. Baseline refreshed.
+  **Behavioural change found live:** `/api/v1/oneagents?includeDetails=true`
+  now returns modules (empty on 1.346), but as `{moduleType, instances[{
+  active, moduleVersion, faultyVersion}]}` with no `enabled` field. Read
+  naively, every module looked disabled: dt_get_oneagent_module_status
+  would have flagged every detected tech as a gap, and the engine's
+  CHECK_FULLSTACK_NO_LOGS every FULL_STACK host (4/4 live, all of which
+  have an active LOG_ANALYTICS). Fixed in both: modules are normalized
+  (enabled = any instance active, version = first instance; explicit
+  `enabled` wins), engine HostInfo falls back to displayName for v1. The
+  tech-gap heuristic also stopped counting platforms (Kubernetes,
+  OpenShift, Docker, containerd, CRI-O, …) as unmonitored technologies —
+  all 4 live "gaps" were KUBERNETES. Tests in both repos.
+
+- **Cluster-level surface had no typed tools** (2026-09-09). The MCP had
+  the plumbing (DT_CLUSTER_TOKEN_FILE, scope:"cluster" in the client,
+  dt_raw_get scope='cluster', cluster spec resource, cluster deny-list for
+  writes) but nothing an AHR could call, and the prompt had no Phase 6.
+  Paths were taken from the cluster's own OpenAPI specs
+  (`/api/v1.0/onpremise/spec3.json`, `/api/cluster/v2/spec3.json`) — the
+  collector's old Phase 6 guessed `/version`, `/environments`,
+  `/cluster/configuration/nodes`, none of which exist. Added, read-only,
+  redacted (password/secret/bind fields), available:false-with-hint when
+  no cluster token: `dt_cluster_get_overview` (nodes, versions,
+  maintenance, upgrade, Elasticsearch, environments),
+  `dt_cluster_get_activegates` (cluster-wide fleet + auto-update + token
+  enforcement), `dt_cluster_get_access_governance` (users, groups, MZ
+  permissions, auth mode, LDAP, password policy, SAML cert),
+  `dt_cluster_get_platform_settings` (preferences, SMTP, proxy, backup,
+  endpoints, network zones, synthetic), `dt_cluster_get_license`,
+  `dt_cluster_get_tokens`, `dt_cluster_get_settings` (cluster-scope
+  Settings 2.0 sweep). AHR prompt gained Phase 6 with the flags per tool.
+  Collector Phase 6 rewritten to the same paths with redaction. First
+  live read already surfaced: backups disabled, SMTP NO_ENCRYPTION,
+  several unnamed cluster tokens, single-node cluster.
+
+- **Two more "surface moved" classes found via the offline collector audit
+  (2026-09-09)**, fixed in MCP, collector and engine:
+  - **`/api/v2/oneagents` does not exist on Managed 1.346** (404); the
+    surface is `/api/v1/oneagents`. Both `dt_get_oneagent_versions` and
+    `dt_get_oneagent_module_status` were failing. New shared helper
+    `helpers/oneagents.ts` (v2 → v1 fallback, v1 hosts normalized to the v2
+    shape: hostName from displayName, version from the agentVersion object,
+    detectedTechnologies from softwareTechnologies; 5 tests). BUT: v1 on
+    this cluster returns `modules: []` and no version for every host even
+    with includeDetails=true — "module data unavailable", which the module
+    tool previously would have read as "every FULL_STACK host has logs off"
+    (17 false positives). The tool now reports `moduleDataAvailable:false`
+    + warning and skips the per-host verdicts; the engine's
+    CHECK_FULLSTACK_NO_LOGS emits one Info finding instead. Alternative
+    source for later: HOST entity properties `installerVersion`,
+    `monitoringMode`, `logFileStatus`, `logSourceState`.
+  - **Billing metric keys moved** exactly like schemas: `builtin:billing.
+    hostunits`, `ddu.metrics`, `ddu.log`, … no longer exist (7 of the 9
+    curated keys); the cluster advertises `builtin:billing.ddu.*.total`,
+    `full_stack_monitoring.usage_per_host`, `real_user_monitoring.*.usage`
+    etc. `dt_get_consumption_summary` now discovers `builtin:billing.*`
+    live and queries the aggregate series (46 on this cluster), grouped by
+    family; breakdown series are counted, not queried
+    (`helpers/billing-metrics.ts`, tests).
+  - **Engine used the wall clock** in CHECK_TOKEN_NEVER_USED (its own
+    doctrine forbids it); the golden fixture had silently changed answer
+    with the calendar. Bundles now carry a reference time from
+    `manifest.json` `generatedAt` (`Bundle.Now()`), fixture pinned.
+  - Collector (`dt-managed-ahr-collector`) rewritten around the same
+    principles: inventory-driven Settings sweep (no schema lists), metric
+    discovery, Config v1 companions, pagination everywhere, retries,
+    error files never named like data, manifest.json. Live: 101 errors →
+    0. See its README.
+
 - **Post-patch verification through the running MCP (1.346.69, 2026-09-09)**
   surfaced two defects, both fixed:
   - **Phantom schemas.** `GET /settings/objects?schemaIds=X` answers 200

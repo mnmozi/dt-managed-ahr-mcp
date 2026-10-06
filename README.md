@@ -81,6 +81,27 @@ read-only usage is unchanged.
 | `dt_get_trace` | `POST /api/v2/spans/query` — look up spans by traceId (typical) or arbitrary spanSelector. Read-via-POST; token needs `traces.lookup`. Falls back gracefully with a note if endpoint isn't on this Managed version. |
 | `dt_query_usql` | `GET /api/v1/userSessionQueryLanguage/table` — run USQL queries over RUM session data. Flattens the column-oriented response into row objects. Token needs `DTAQLAccess`. |
 
+| `dt_get_update_governance` | `builtin:deployment.*` — OneAgent / ActiveGate update targets, update windows, default deployment mode. Flag: no update windows, targets pinned to stale versions. |
+| `dt_get_cost_controls` | `builtin:accounting.ddu.limit`, `builtin:metric.dimensionblocklist` — the configured DDU caps and ingest-time dimension blocking (levers, vs. `dt_get_consumption_summary` which shows spend). |
+| `dt_get_host_monitoring_modes` | `builtin:host.monitoring*`, `builtin:os-services-monitoring`, `builtin:disk.options` — hosts silently in infra-only/discovery mode, monitoring disabled, OS-service rules, disk exclusions. Zero objects = defaults apply. |
+| `dt_get_technology_monitoring` | `builtin:monitored-technologies.*` — per-technology OneAgent module toggles; the config lever behind `techGapHosts`. |
+
+Every schema-backed read carries a `surfaceStatus` (`ok` / `config-v1-only` / `not-available-on-this-platform` / `SURFACE_MISSING`) so a wrapper whose schema ids were renamed on a newer Managed version fails loudly instead of returning an empty success. `npm run drift:schemas` diffs every probe list and companion endpoint against the live cluster and `schema-baseline.json` (ids + versions); run it after every Managed upgrade.
+
+### Cluster tools (require `DT_CLUSTER_TOKEN` / `DT_CLUSTER_TOKEN_FILE`)
+
+Read-only Cluster Management API surface (`/api/v1.0/onpremise/*`, `/api/cluster/v2/*`), paths taken from the cluster's own OpenAPI specs. Secret-looking fields (SMTP/LDAP passwords, secrets) are redacted before they leave the tool. Without a cluster token each tool answers `available: false` with the env var to set; the raw mutating tools refuse cluster-admin paths regardless. These back Phase 6 of the AHR prompt.
+
+| Tool | Reads | Flags |
+|---|---|---|
+| `dt_cluster_get_overview` | nodes + build versions, node roles, cluster UUID/name, maintenance mode, product version, upgrade state + staged installers, Elasticsearch upgrade status + outdated indices, all environments | node not RUNNING, single-node cluster, maintenance mode on, DISABLED environments, outdated ES indices |
+| `dt_cluster_get_activegates` | cluster-wide ActiveGate fleet, auto-update config, token enforcement, update jobs | offline AGs, autoUpdateStatus ≠ UP2DATE, AGs serving no environment, token enforcement off |
+| `dt_cluster_get_access_governance` | users, groups, per-group MZ permissions, auth mode, LDAP (redacted), password policy, SAML SP cert, user sessions | users in no group, cluster-admin count, groups scoped to every environment, INTERNAL auth without SSO, weak password policy, SAML cert expiring, LDAP without TLS |
+| `dt_cluster_get_platform_settings` | preferences, SMTP (redacted), proxy, backup config/status, public endpoints, cluster network zones, synthetic locations/nodes | backup disabled, SMTP unconfigured / NO_ENCRYPTION, empty beacon forwarder / CDN with RUM in use |
+| `dt_cluster_get_license` | cluster license, per-environment totals | pair with `dt_get_consumption_summary` — ceiling vs. spend |
+| `dt_cluster_get_tokens` | every cluster token (details capped, values never exposed), ActiveGate tokens | unnamed tokens, no expiry, cluster-admin scopes, never used |
+| `dt_cluster_get_settings` | cluster-scope Settings 2.0 sweep over every advertised schema (update windows, password policy, privacy, login screen, token settings, cluster-events notifications, audit log) | no cluster update window, cluster-events notifications empty, audit log off |
+
 ## Write tools (require `DT_WRITE_TOKEN`)
 
 All writes are audited to JSONL files under `DT_AUDIT_DIR` (default
@@ -107,6 +128,8 @@ All writes are audited to JSONL files under `DT_AUDIT_DIR` (default
 | `dt_remove_tag` | `DELETE /api/v2/tags?entitySelector=...` | Remove a manual tag. Either `value` (specific value) or `deleteAllWithKey: true` (every variant of the key). |
 | `dt_create_slo` / `dt_update_slo` / `dt_delete_slo` | `/api/v2/slo[/{id}]` | Manage SLOs. Required: `name`, `target` (0–100), `timeframe`, and either `metricExpression` (modern) or `metricRate` (legacy). |
 | `dt_create_synthetic_monitor` / `dt_update_synthetic_monitor` / `dt_delete_synthetic_monitor` | `/api/v1/synthetic/monitors[/{id}]` | Manage synthetic monitors (HTTP and BROWSER). `script` shape varies by type — see Dynatrace Synthetic docs. |
+| `dt_apply_pg_naming_rule` / `dt_apply_host_clarifying_tag` / `dt_apply_service_clarifying_tag` | `POST /api/v2/tags` (+ `POST /api/config/v1/conditionalNaming/{type}` with `createNamingRule: true`) | Apply operator-approved naming decisions from the `dt_audit_*_naming` reports. Every decision is validated against the engine report (decision lattice: `engine_high` / `ai_proposed` / `operator_confirmed` / `operator_override`) — the AI can neither upgrade a confidence bucket nor invent a name. Tags alone do not rename; `createNamingRule` creates the real Config v1 conditional-naming rule, deduped by `nameFormat`. |
+| `dt_create_extension_monitoring_config` / `dt_update_extension_monitoring_config` / `dt_delete_extension_monitoring_config` / `dt_update_extension_environment_config` | `/api/v2/extensions/{name}/monitoringConfigurations[/{id}]`, `/api/v2/extensions/{name}/environmentConfiguration` | Extensions 2.0 monitoring + environment configuration. Same confirm + audit pattern. |
 
 ### Writing to auto-tag / naming / detection / alerting rules
 
@@ -208,7 +231,7 @@ Configuration is env-driven — nothing is hardcoded.
 | `DT_CLUSTER_URL` | yes | e.g. `https://localhost:8080`. No trailing slash, no `/e/<env>`. |
 | `DT_ENV_ID` | yes | Environment UUID. |
 | `DT_TOKEN` **or** `DT_TOKEN_FILE` | exactly one | Read token. |
-| `DT_CLUSTER_TOKEN` / `DT_CLUSTER_TOKEN_FILE` | optional | Cluster-scoped reads + `cluster-v1` spec. |
+| `DT_CLUSTER_TOKEN` / `DT_CLUSTER_TOKEN_FILE` | optional | Enables the `dt_cluster_get_*` tools (AHR Phase 6), `dt_raw_get` with `scope='cluster'`, and the `cluster-v1` spec resource. A Cluster Management API token; read-only scopes are enough. |
 | `DT_WRITE_TOKEN` / `DT_WRITE_TOKEN_FILE` | optional | **When present, enables the write tools.** Use a separate, narrowly-scoped token (settings.write, metrics.ingest, WriteConfig) — not the same as your read token. |
 | `DT_AUDIT_DIR` | optional | Directory for write-tool audit JSONL. Default: `<cwd>/.audit`. |
 | `DT_TLS_VERIFY` | optional | Set to `0` to skip TLS verification (self-signed clusters). |

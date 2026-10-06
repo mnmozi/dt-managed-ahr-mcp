@@ -12,7 +12,13 @@ vi.mock("undici", () => {
 
 import { request } from "undici";
 import { DtClient } from "../dt-client.js";
-import { preValidateSettings, type SettingsPayload } from "./settings-validate.js";
+import {
+  hintFor,
+  parseItemArray,
+  preValidateSettings,
+  validateSettingsBatch,
+  type SettingsPayload,
+} from "./settings-validate.js";
 import { setLogLevel } from "../logger.js";
 
 setLogLevel("error");
@@ -165,5 +171,116 @@ describe("preValidateSettings", () => {
     requestMock.mockResolvedValueOnce(makeResp(200, JSON.stringify({ ok: true })));
     const r = await preValidateSettings(makeClient(), "dt_create_settings", sampleBody);
     expect(r.ok).toBe(true);
+  });
+});
+
+// Bodies below are verbatim validateOnly responses from Managed 1.350.7.
+const cpuQuota: SettingsPayload = {
+  schemaId: "builtin:logmonitoring.log-agent-cpu-quota",
+  scope: "environment",
+  value: { LAConfigCpuQuota: "lots" },
+};
+const cpuQuotaTypeError = {
+  code: 400,
+  error: {
+    code: 400,
+    message: "Validation failed for 1 Validators.",
+    constraintViolations: [
+      {
+        path: "builtin:logmonitoring.log-agent-cpu-quota/0/LAConfigCpuQuota",
+        message: "Must be of type float",
+        parameterLocation: "PAYLOAD_BODY",
+        location: null,
+      },
+    ],
+  },
+  invalidValue: { LAConfigCpuQuota: "lots" },
+};
+
+describe("preValidateSettings — per-item errors on a 4xx (Managed 1.350)", () => {
+  it("attributes a single-object 400 to its item instead of '<batch>'", async () => {
+    requestMock.mockResolvedValueOnce(makeResp(400, JSON.stringify([cpuQuotaTypeError])));
+    const r = await preValidateSettings(makeClient(), "dt_create_settings", [cpuQuota]);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.invalidItems).toHaveLength(1);
+      expect(r.invalidItems[0]!.index).toBe(0);
+      expect(r.invalidItems[0]!.schemaId).toBe("builtin:logmonitoring.log-agent-cpu-quota");
+      expect(JSON.stringify(r.invalidItems[0]!.error)).toContain("Must be of type float");
+    }
+  });
+
+  it("attributes a wrong-scope 404 and adds a hint", async () => {
+    requestMock.mockResolvedValueOnce(
+      makeResp(
+        404,
+        JSON.stringify([
+          { code: 404, error: { code: 404, message: "No write access for scope class PROCESS_GROUP" } },
+        ])
+      )
+    );
+    const r = await preValidateSettings(makeClient(), "dt_create_settings", [
+      { ...cpuQuota, scope: "PROCESS_GROUP-0000000000000001" },
+    ]);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.invalidItems[0]!.index).toBe(0);
+      expect(r.invalidItems[0]!.hint).toMatch(/allowedScopes/);
+    }
+  });
+
+  it("parses a 207 mixed batch and reports only the failing items", async () => {
+    requestMock.mockResolvedValueOnce(
+      makeResp(207, JSON.stringify([{ code: 200 }, cpuQuotaTypeError]))
+    );
+    const outcome = await validateSettingsBatch(makeClient(), "dt_validate_settings", [
+      { ...cpuQuota, value: { LAConfigCpuQuota: 50 } },
+      cpuQuota,
+    ]);
+    expect(outcome.kind).toBe("items");
+    if (outcome.kind === "items") {
+      expect(outcome.status).toBe(207);
+      expect(outcome.invalid.map((i) => i.index)).toEqual([1]);
+    }
+  });
+
+  it("falls back to a batch-level error when the 4xx body is not an item array", async () => {
+    requestMock.mockResolvedValueOnce(makeResp(401, JSON.stringify({ error: { code: 401, message: "bad token" } })));
+    const outcome = await validateSettingsBatch(makeClient(), "dt_validate_settings", [cpuQuota]);
+    expect(outcome.kind).toBe("api-error");
+  });
+});
+
+describe("hintFor", () => {
+  it.each([
+    ["Schema builtin:bizevents.http.incoming is not supported for managed deployments.", /only on SaaS/],
+    ["No schema with topic identifier 'Not allowed for non-DPS license'", /DPS license/],
+    ["No schema with topic identifier 'builtin:process-group.advanced-detection-rule'", /dt_list_schemas/],
+    ["Configuration schema builtin:network-zones does not exist.", /dt_list_schemas/],
+    ["No write access for scope class PROCESS_GROUP", /allowedScopes/],
+  ])("translates %s", (message, want) => {
+    expect(hintFor({ message })).toMatch(want);
+  });
+
+  it("flags unknown properties from constraint violations", () => {
+    expect(
+      hintFor({
+        message: "Validation failed for 3 Validators.",
+        constraintViolations: [{ path: "builtin:management-zones/0/rules/0/bogus", message: "Unknown property" }],
+      })
+    ).toMatch(/dt_get_schema/);
+  });
+
+  it("returns nothing for an ordinary type error", () => {
+    expect(hintFor(cpuQuotaTypeError.error)).toBeUndefined();
+  });
+});
+
+describe("parseItemArray", () => {
+  it("rejects arrays that do not match the batch length", () => {
+    expect(parseItemArray(JSON.stringify([{ code: 200 }]), 2)).toBeNull();
+  });
+  it("rejects non-JSON", () => {
+    expect(parseItemArray("<html>", 1)).toBeNull();
   });
 });

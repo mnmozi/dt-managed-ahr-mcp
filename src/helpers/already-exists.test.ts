@@ -102,6 +102,7 @@ describe("checkAlreadyExists", () => {
     // Sanity check on the map — these should all be schemas users commonly create.
     expect(NAME_FIELD_BY_SCHEMA["builtin:management-zones"]).toBe("name");
     expect(NAME_FIELD_BY_SCHEMA["builtin:problem.notifications"]).toBe("displayName");
+    expect(NAME_FIELD_BY_SCHEMA["builtin:event-correlation-rules"]).toBe("displayName");
     expect(NAME_FIELD_BY_SCHEMA["builtin:anomaly-detection.metric-events"]).toBe("summary");
   });
 });

@@ -109,6 +109,8 @@ export const WRAPPERS: WrapperDef[] = [
       "builtin:logmonitoring.custom-log-source-settings",
       "builtin:logmonitoring.log-agent-configuration",
       "builtin:logmonitoring.log-sfm-settings",
+      // added in Managed 1.350 (HOST / HOST_GROUP / environment scope)
+      "builtin:logmonitoring.log-agent-cpu-quota",
     ],
   },
   {
@@ -120,8 +122,14 @@ export const WRAPPERS: WrapperDef[] = [
   {
     toolName: "dt_get_alerting_profiles",
     description:
-      "Alerting profiles (builtin:alerting.profile) + connectivity alerts. Control which problem severities/categories route to which integrations and management zones.",
-    schemaIds: ["builtin:alerting.profile", "builtin:alerting.connectivity-alerts"],
+      "Alerting profiles (builtin:alerting.profile) + connectivity alerts. Control which problem severities/categories route to which integrations and management zones. On 1.350+ also event-correlation rules and the platform event-correlation switch, which decide how events are grouped into problems before any profile sees them.",
+    schemaIds: [
+      "builtin:alerting.profile",
+      "builtin:alerting.connectivity-alerts",
+      // added in Managed 1.350
+      "builtin:event-correlation-rules",
+      "builtin:platform-event-correlation",
+    ],
   },
   {
     toolName: "dt_get_problem_notifications",
@@ -502,10 +510,13 @@ export const WRAPPERS: WrapperDef[] = [
   {
     toolName: "dt_get_cost_controls",
     description:
-      "Cost-control configuration: DDU pool limits (builtin:accounting.ddu.limit) and ingest-time metric dimension blocking (builtin:metric.dimensionblocklist — drops high-cardinality dimensions from Metrics v2/OTLP/Prometheus ingest). Pair with dt_get_consumption_summary in Phase 5: consumption metrics show the spend, this shows the configured caps/levers.",
+      "Cost-control configuration: DDU pool limits (builtin:accounting.ddu.limit) and ingest-time metric dimension blocking (builtin:metric.dimensionblocklist — drops high-cardinality dimensions from Metrics v2/OTLP/Prometheus ingest). On 1.350+ also metric-limit alerts (builtin:metric.limits-alerts — warn before metric/dimension limits are hit; enabling them consumes metric-event quota) and the tenant-wide Container Application Monitoring billing opt-in. Pair with dt_get_consumption_summary in Phase 5: consumption metrics show the spend, this shows the configured caps/levers.",
     schemaIds: [
       "builtin:accounting.ddu.limit",
       "builtin:metric.dimensionblocklist",
+      // added in Managed 1.350
+      "builtin:metric.limits-alerts",
+      "builtin:billing.container-application-monitoring.optin",
     ],
   },
   {

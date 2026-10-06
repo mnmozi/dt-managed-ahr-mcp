@@ -1,7 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { DtApiError, WriteNotEnabledError, type DtClient } from "../dt-client.js";
+import type { DtClient } from "../dt-client.js";
 import type { AuditLog } from "../audit.js";
+import { validateSettingsBatch } from "../helpers/settings-validate.js";
 
 const TOOL = "dt_validate_settings";
 
@@ -19,7 +20,7 @@ export function registerValidateSettings(
     TOOL,
     {
       description:
-        "Dry-run one or more Settings 2.0 object payloads against Dynatrace. No side effects. Returns the server's validation response so you can fix the payload before calling dt_create_settings. Requires DT_WRITE_TOKEN. Prefer this BEFORE every create.",
+        "Dry-run one or more Settings 2.0 object payloads against Dynatrace. No side effects. Returns per-item results: invalidItems[] lists each failing item by index with Dynatrace's constraint violations and, for known opaque messages (schema not on Managed / needs DPS / not advertised, scope type not allowed), a plain-language hint. validated is true only if EVERY item passes. Requires DT_WRITE_TOKEN. Prefer this BEFORE every create.",
       inputSchema: {
         objects: z
           .array(
@@ -46,59 +47,42 @@ export function registerValidateSettings(
         scope: o.scope,
         value: o.value,
       }));
-      try {
-        const { status, path, data } = await client.post<unknown>(
-          TOOL,
-          "/api/v2/settings/objects",
-          body,
-          { query: { validateOnly: true } }
-        );
-        audit.write({
-          timestamp: new Date().toISOString(),
-          tool: TOOL,
-          method: "POST",
-          path,
-          validateOnly: true,
-          status,
-          requestBody: body,
-          responseBody: data,
-        });
+      const outcome = await validateSettingsBatch(client, TOOL, body);
+
+      if (outcome.kind === "transport") {
         return {
-          content: [
-            { type: "text", text: JSON.stringify({ validated: true, status, response: data }, null, 2) },
-          ],
+          content: [{ type: "text", text: JSON.stringify({ validated: false, error: outcome.message }, null, 2) }],
+          isError: true,
         };
-      } catch (err) {
-        if (err instanceof WriteNotEnabledError) {
-          return { content: [{ type: "text", text: err.message }], isError: true };
-        }
-        if (err instanceof DtApiError) {
-          audit.write({
-            timestamp: new Date().toISOString(),
-            tool: TOOL,
-            method: "POST",
-            path: err.path,
-            validateOnly: true,
-            status: err.status,
-            requestBody: body,
-            error: err.body,
-          });
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(
-                  { validated: false, status: err.status, error: err.body },
-                  null,
-                  2
-                ),
-              },
-            ],
-            isError: true,
-          };
-        }
-        throw err;
       }
+      const ok = outcome.kind === "items" && outcome.invalid.length === 0;
+      audit.write({
+        timestamp: new Date().toISOString(),
+        tool: TOOL,
+        method: "POST",
+        path: "/api/v2/settings/objects?validateOnly=true",
+        validateOnly: true,
+        status: outcome.status,
+        requestBody: body,
+        ...(outcome.kind === "items"
+          ? { responseBody: outcome.items }
+          : { error: outcome.body }),
+      });
+
+      const payload =
+        outcome.kind === "items"
+          ? {
+              validated: ok,
+              status: outcome.status,
+              validItems: body.length - outcome.invalid.length,
+              invalidItems: outcome.invalid,
+              ...(ok ? { response: outcome.items } : {}),
+            }
+          : { validated: false, status: outcome.status, error: outcome.body.slice(0, 2000) };
+      return {
+        content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
+        ...(ok ? {} : { isError: true }),
+      };
     }
   );
 }

@@ -1,31 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { DtClient } from "../dt-client.js";
-
-interface OAModule {
-  moduleType?: string;
-  enabled?: boolean;
-  version?: string;
-  misconfigured?: boolean;
-}
-
-interface OAHost {
-  hostInfo?: { hostName?: string; entityId?: string; osType?: string };
-  monitoringType?: string; // FULL_STACK | INFRASTRUCTURE | DISCOVERY etc.
-  active?: boolean;
-  faultyVersion?: boolean;
-  modules?: OAModule[];
-  currentVersion?: string;
-  installerVersion?: string;
-  detectedTechnologies?: Array<{ type?: string; version?: string }>;
-  [k: string]: unknown;
-}
-
-interface OAListResp {
-  totalCount?: number;
-  nextPageKey?: string | null;
-  hosts?: OAHost[];
-}
+import { fetchOneAgents, type OneAgentHost as OAHost } from "../helpers/oneagents.js";
 
 const KNOWN_LOG_MODULES = ["LOG_ANALYTICS", "LOGS", "LOG"];
 
@@ -33,6 +9,25 @@ function isLogModule(t: string | undefined): boolean {
   if (!t) return false;
   const u = t.toUpperCase();
   return KNOWN_LOG_MODULES.some((k) => u.includes(k));
+}
+
+// Platforms / container runtimes OneAgent reports as detected technologies
+// but never deep-monitors through a code module of their own. Without this,
+// every Kubernetes node shows up as a "tech gap" (live on 1.350: 4/4 hosts).
+const PLATFORM_TECHS = new Set([
+  "KUBERNETES",
+  "OPENSHIFT",
+  "DOCKER",
+  "CONTAINERD",
+  "CRIO",
+  "CRI_O",
+  "PODMAN",
+  "GARDEN",
+  "CLOUD_FOUNDRY",
+]);
+
+export function isPlatformTech(t: string): boolean {
+  return PLATFORM_TECHS.has(t.toUpperCase().replace(/-/g, "_"));
 }
 
 export function registerOneAgentModuleStatus(server: McpServer, client: DtClient): void {
@@ -49,25 +44,13 @@ export function registerOneAgentModuleStatus(server: McpServer, client: DtClient
       },
     },
     async ({ includeHosts }) => {
-      const all: OAHost[] = [];
-      let nextPageKey: string | null | undefined;
-      let pages = 0;
-      const cap = 200;
-      do {
-        const resp = nextPageKey
-          ? await client.get<OAListResp>("/api/v2/oneagents", {
-              query: { nextPageKey },
-            })
-          : await client.get<OAListResp>("/api/v2/oneagents", {
-              query: {
-                pageSize: 500,
-                fields: "+modules,+detectedTechnologies",
-              },
-            });
-        if (resp.hosts) all.push(...resp.hosts);
-        nextPageKey = resp.nextPageKey ?? null;
-        pages++;
-      } while (nextPageKey && pages < cap);
+      const inventory = await fetchOneAgents(client, { fields: "+modules,+detectedTechnologies" });
+      const all: OAHost[] = inventory.hosts;
+      // Managed 1.346 serves only /api/v1/oneagents, which returns modules:[]
+      // for EVERY host (1.350 fills them in; fetchOneAgents normalizes the
+      // instances[] shape to enabled/version). That is "module data unavailable", not "every host has
+      // its log module off" — evaluating coverage on it would flag all hosts.
+      const moduleDataAvailable = all.some((h) => (h.modules ?? []).length > 0);
 
       const moduleEnabledCount = new Map<string, number>();
       const moduleDisabledCount = new Map<string, number>();
@@ -91,7 +74,7 @@ export function registerOneAgentModuleStatus(server: McpServer, client: DtClient
       }
 
       // Critical finding 1: hosts in FULL_STACK with log module disabled
-      const fullStackHostsWithoutLogs = fullStackHosts
+      const fullStackHostsWithoutLogs = (moduleDataAvailable ? fullStackHosts : [])
         .filter((h) => {
           const logMods = (h.modules ?? []).filter((m) => isLogModule(m.moduleType));
           if (logMods.length === 0) return true; // no log module at all
@@ -114,10 +97,10 @@ export function registerOneAgentModuleStatus(server: McpServer, client: DtClient
         missingTechModules: string[];
       }> = [];
 
-      for (const h of fullStackHosts) {
+      for (const h of moduleDataAvailable ? fullStackHosts : []) {
         const detected = (h.detectedTechnologies ?? [])
           .map((t) => (t.type ?? "").toUpperCase())
-          .filter(Boolean);
+          .filter((t) => t && !isPlatformTech(t));
         if (detected.length === 0) continue;
         const enabledModules = (h.modules ?? [])
           .filter((m) => m.enabled)
@@ -154,6 +137,14 @@ export function registerOneAgentModuleStatus(server: McpServer, client: DtClient
 
       const summary = {
         totalHosts: all.length,
+        inventorySource: inventory.source,
+        moduleDataAvailable,
+        ...(moduleDataAvailable
+          ? {}
+          : {
+              warning:
+                "No host in the inventory reports module details (the OneAgents API on this Managed version omits them). fullStackHostsWithoutLogs and techGapHosts were NOT evaluated — an empty list here is 'unknown', not 'clean'. Use HOST entity properties (logFileStatus / logSourceState via dt_get_process_properties) or builtin:logmonitoring.* settings to assess log coverage.",
+            }),
         monitoringTypes: Object.fromEntries(monitoringTypeCounts),
         modulesEnabled: Object.fromEntries(moduleEnabledCount),
         modulesDisabled: Object.fromEntries(moduleDisabledCount),
@@ -166,7 +157,7 @@ export function registerOneAgentModuleStatus(server: McpServer, client: DtClient
         misconfiguredHostsSample: misconfiguredHosts.slice(0, 30),
         notes: [
           "fullStackHostsWithoutLogs = OneAgent in FULL_STACK mode but log monitoring module is missing or disabled — silent log coverage gap.",
-          "techGapHosts = OneAgent detected one or more technologies on the host but no enabled module appears to cover them. Heuristic match — verify per-host before concluding.",
+          "techGapHosts = OneAgent detected one or more technologies on the host but no enabled module appears to cover them. Heuristic match — verify per-host before concluding. Platforms/container runtimes (Kubernetes, OpenShift, Docker, containerd, CRI-O, …) are excluded: they have no code module of their own.",
         ],
       };
 

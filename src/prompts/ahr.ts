@@ -459,6 +459,22 @@ Tie back to earlier phases:
 
 Output: \`${reportDir}/phase-5.md\`. Append to report. STOP.
 
+=== PHASE 6 — Cluster (Managed cluster level; requires a cluster token) ===
+
+Gate: \`dt_whoami\` reports \`clusterTokenConfigured\`. If false, write a one-paragraph \`${reportDir}/phase-6.md\` saying the cluster level was not reviewed (no cluster token) and what it would have covered, then STOP. Never try to reach cluster paths through dt_raw_get without the token.
+
+Everything here is read-only; the write tools refuse cluster-admin paths by design. Cluster changes go through the Cluster Management Console.
+
+- \`dt_cluster_get_overview\` — nodes, versions, maintenance mode, upgrade state, Elasticsearch health, environments. Flag: any node not RUNNING; single-node cluster (state it plainly as a resilience finding — ES YELLOW is expected there, not a defect); maintenance mode on; environments in a non-ENABLED state; outdated ES indices; product version older than the current Managed release line; staged installers older than the running version (leftover downloads).
+- \`dt_cluster_get_activegates\` — cluster-wide AG fleet. Flag: AGs offline (offlineSince), autoUpdateStatus other than UP2DATE, AG versions behind the cluster, AGs serving zero environments, token enforcement disabled. Cross-check with Phase 1's environment-scoped AG findings — an AG missing there but present here is scoped to another environment.
+- \`dt_cluster_get_access_governance\` — identity posture. Flag: users in no group; cluster-admin group size (>3 is worth a question); groups with MZ permissions on every environment (effectively unscoped); INTERNAL authentication with ssoOnly=false on a production cluster; password policy weaker than 12 chars + complexity; SAML SP cert expiring within 90 days; LDAP without a secure connection. Treat user emails as personal data: counts and ids in the report, no email lists.
+- \`dt_cluster_get_platform_settings\` — operational config. Flag: backup disabled (High — nothing protects the cluster data) or no successful backup status; SMTP unconfigured or NO_ENCRYPTION (email notifications from Phase 4.5 silently fail or leak); beacon forwarder / CDN empty while RUM apps exist (Phase 4.8); network zones enabled but none defined; proxy absent where the cluster needs egress (Mission Control, updates).
+- \`dt_cluster_get_license\` — cluster license ceiling vs. Phase 5 environment consumption; endpoints may be absent on this version — say so, don't guess.
+- \`dt_cluster_get_tokens\` — cluster token hygiene. Flag: unnamed tokens (no traceable owner), tokens without expiry, cluster-admin scopes, never-used tokens. Same treatment as Phase 4.6 environment tokens, one level up.
+- \`dt_cluster_get_settings\` — cluster-scope Settings 2.0 sweep. Flag: no cluster update window (upgrades can land at any time); cluster-events notifications empty (nobody is notified about node or upgrade events); audit log disabled at cluster scope; password-policy / privacy / login-screen objects absent (defaults in force — state which defaults).
+
+Output: \`${reportDir}/phase-6.md\` with sections — Cluster Health & Topology, ActiveGate Fleet, Identity & Access, Platform Configuration (backup / SMTP / endpoints), License, Token Hygiene, Cluster Settings, Remediation (each item marked "CMC" since none of it is scriptable through this MCP). Append to \`${reportDir}/report.md\`. STOP.
+
 === FINAL ===
 
 Finish \`${reportDir}/report.md\` with:

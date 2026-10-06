@@ -36,8 +36,11 @@ export const NAME_FIELD_BY_SCHEMA: Record<string, string> = {
   "builtin:problem.notifications": "displayName",
   "builtin:anomaly-detection.metric-events": "summary",
   "builtin:logmonitoring.log-events": "summary",
+  // not advertised on Managed 1.350 — kept for older clusters
   "builtin:span-event-extraction": "name",
   "builtin:opentelemetry-metrics": "name",
+  // added in Managed 1.350 (multiObject, environment scope)
+  "builtin:event-correlation-rules": "displayName",
 };
 
 export interface ExistsConflict {

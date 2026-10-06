@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { DtApiError, type DtClient } from "../dt-client.js";
 import { getEngine } from "../engine/engine-singleton.js";
+import { fetchOneAgents } from "../helpers/oneagents.js";
 import {
   analyzeOneAgentDistribution,
   type OneAgentHostRaw,
@@ -11,7 +12,8 @@ import {
  * dt_get_oneagent_versions — audit OneAgent rollout health.
  *
  * This tool is "piping": it
- *   1. fetches /api/v2/oneagents (auto-paginated)
+ *   1. fetches the OneAgent inventory (v2 paginated, or v1 on Managed
+ *      versions that don't serve v2 — normalized to the v2 shape)
  *   2. fetches the cluster's latest available version per OS
  *      (/api/v1/deployment/installer/agent/{os}/default/latest/metainfo)
  *   3. hands both to the engine's `oneagent.distribution` analyzer
@@ -19,13 +21,6 @@ import {
  *
  * All actual math (counts, comparisons, "behind latest") lives in the engine.
  */
-
-interface OneAgentListResponse {
-  totalCount?: number;
-  pageSize?: number;
-  nextPageKey?: string | null;
-  hosts?: OneAgentHostRaw[];
-}
 
 /**
  * Fetches the cluster's latest available OneAgent version for each OS that
@@ -120,23 +115,9 @@ export function registerOneAgentVersions(server: McpServer, client: DtClient): v
       },
     },
     async ({ includeHosts, skipLatestLookup, osTypeOverrides }) => {
-      // ---------- 1. Paginate /api/v2/oneagents ----------
-      const hosts: OneAgentHostRaw[] = [];
-      let nextPageKey: string | null | undefined;
-      let pages = 0;
-      const cap = 200;
-      do {
-        const resp = nextPageKey
-          ? await client.get<OneAgentListResponse>("/api/v2/oneagents", {
-              query: { nextPageKey },
-            })
-          : await client.get<OneAgentListResponse>("/api/v2/oneagents", {
-              query: { pageSize: 500 },
-            });
-        if (resp.hosts) hosts.push(...resp.hosts);
-        nextPageKey = resp.nextPageKey ?? null;
-        pages++;
-      } while (nextPageKey && pages < cap);
+      // ---------- 1. OneAgent inventory (v2, or v1 fallback) ----------
+      const inventory = await fetchOneAgents(client);
+      const hosts = inventory.hosts as OneAgentHostRaw[];
 
       // ---------- 2. Fetch per-OS latest versions ----------
       const observedOsTypes = new Set<string>();
@@ -190,7 +171,7 @@ export function registerOneAgentVersions(server: McpServer, client: DtClient): v
       }
 
       // ---------- 4. Shape response ----------
-      const responseBody: Record<string, unknown> = { summary };
+      const responseBody: Record<string, unknown> = { summary, inventorySource: inventory.source };
       if (latestLookupErrors.length > 0) {
         responseBody.latestLookupErrors = latestLookupErrors;
       }
