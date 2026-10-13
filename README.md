@@ -67,6 +67,7 @@ read-only usage is unchanged.
 | `dt_get_entity_orphans` | SERVICE-without-PG, HOST-without-monitored-PG, zombie-PG, inactive-host. |
 | `dt_get_recently_changed_settings` | Settings 2.0 objects modified in last N days. |
 | `dt_get_calculated_service_metrics` | Calculated service metric definitions. |
+| `dt_audit_log_metric_usage` | Log metrics (`log.*`) vs their consumers (metric events, SLOs, dashboards) and data presence → broken / orphan / dead / used. |
 | `dt_get_service_request_cardinality` | Distinct request-name count + top-N per service. |
 | `dt_get_request_naming` | request-naming + request-attributes. |
 | `dt_get_naming_rules` | Settings 2.0 conditional-naming rules. |

@@ -3,6 +3,7 @@ import type { DtClient } from "../dt-client.js";
 
 import { registerConsumption } from "../tools/consumption.js";
 import { registerCalculatedServiceMetrics } from "../tools/calculated-service-metrics.js";
+import { registerAuditLogMetricUsage } from "../tools/audit-log-metric-usage.js";
 import { registerServiceRequestCardinality } from "../tools/service-request-cardinality.js";
 import { registerAuditLog } from "../tools/audit-log.js";
 import { registerDashboards } from "../tools/dashboards.js";
@@ -43,6 +44,7 @@ import { registerExportHostgroupRemediation } from "../tools/export-hostgroup-re
 export function registerObservabilityReads(server: McpServer, client: DtClient): void {
   registerConsumption(server, client);
   registerCalculatedServiceMetrics(server, client);
+  registerAuditLogMetricUsage(server, client);
   registerServiceRequestCardinality(server, client);
   registerAuditLog(server, client);
   registerDashboards(server, client);

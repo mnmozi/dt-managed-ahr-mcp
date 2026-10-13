@@ -447,7 +447,8 @@ Checks:
 
 Configuration cross-checks (cost-driver evidence, mandatory):
 - \`dt_get_process_monitoring_rules\` — list rules. Flag overbroad rules (no condition, applies to all hosts/PGs), redundant rules, and processes monitored that have 0 traffic over the window (waste). Tie to high host-unit / DDU-metrics totals.
-- \`dt_get_log_ingestion_rules\` — list rules across the schemas. Flag: log sources with no retention rule, overbroad ingest patterns, missing sensitive-data masking on user-facing logs, metric-extraction rules with no consumer (dead extraction). Tie to high DDU-logs.
+- \`dt_get_log_ingestion_rules\` — list rules across the schemas. Flag: log sources with no retention rule, overbroad ingest patterns, missing sensitive-data masking on user-facing logs. Tie to high DDU-logs.
+- \`dt_audit_log_metric_usage\` — log metric usage (mandatory; do NOT cross-reference by hand). Report the summary counts and list every finding in the broken, orphan and dead buckets with key, reason, consumers and lastWritten (a date = the metric stopped then — look for a log source or matcher change around it; "never" = the matcher never matched). broken (consumed but no data, or rule disabled) is the highest priority: those metric events / SLOs / tiles are silently empty — list them first. orphan = DDU-metrics cost with no in-tenant consumer: recommend delete OR wire into an alert/SLO/tile, and always say "confirm no external Metrics API consumer first". dead = safe delete. If \`conclusive\` is false, quote the warnings and label orphan/dead as candidates only.
 - \`dt_get_network_zones\` — list zones. Flag misrouted OneAgents (connecting to AGs in a different zone) which inflates AG bandwidth cost and can cause data gaps.
 - \`dt_get_span_capturing\` — sampling and capture rules + span-attribute extraction. Tie to DDU-traces. Flag overbroad capture, missing sampling, attribute extraction with cardinality risk (per-user-id capture).
 
